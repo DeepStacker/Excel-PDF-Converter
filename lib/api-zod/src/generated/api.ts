@@ -9,7 +9,6 @@ import * as zod from 'zod';
 
 
 /**
- * Returns server health status
  * @summary Health check
  */
 export const HealthCheckResponse = zod.object({
@@ -20,29 +19,36 @@ export const HealthCheckResponse = zod.object({
 /**
  * @summary List all bank configurations
  */
+export const listBanksResponseColumnMappingColumnsItemDataTypeDefault = `text`;
 export const listBanksResponsePdfStylePageOrientationDefault = `landscape`;
 export const listBanksResponsePdfStyleFontSizeDefault = 9;
 export const listBanksResponsePdfStyleRowHeightDefault = 30.5;
+export const listBanksResponsePdfStyleHeaderRowHeightDefault = 22.5;
 
 export const ListBanksResponseItem = zod.object({
   "id": zod.number(),
-  "name": zod.string().describe('Full bank name'),
-  "code": zod.string().describe('Short bank identifier code'),
+  "name": zod.string(),
+  "code": zod.string(),
   "description": zod.string().nullish(),
   "columnMapping": zod.object({
-  "prospectNo": zod.string().describe('Excel column name for Prospect No'),
-  "cuid": zod.string().describe('Excel column name for CUID'),
-  "tareWeight": zod.string().describe('Excel column name for Tare Weight'),
-  "state": zod.string().describe('Excel column name for State'),
-  "branchCode": zod.string().describe('Excel column name for Branch Code'),
-  "branchName": zod.string().describe('Excel column name for Branch Name')
-}).describe('Maps PDF column names to Excel column names'),
+  "branchGroupBy": zod.string().describe('Excel column name used to group rows by branch (e.g. CurrentBranch)'),
+  "branchNameCol": zod.string().describe('Excel column name for branch name display in PDF header'),
+  "stateCol": zod.string().describe('Excel column name for state display in PDF header'),
+  "columns": zod.array(zod.object({
+  "header": zod.string().describe('Column header text shown in the PDF (use \\n for line breaks)'),
+  "excelColumn": zod.string().nullish().describe('Excel column name to pull data from. Null means this column is blank (filled by hand during audit)'),
+  "width": zod.number().describe('Column width in PDF points'),
+  "dataType": zod.enum(['text', 'number']).default(listBanksResponseColumnMappingColumnsItemDataTypeDefault).describe('Affects formatting: number removes trailing .0'),
+  "headerColor": zod.string().nullish().describe('Override header background color for this column (hex). Null uses the default group color.')
+}).describe('A single PDF column definition')).describe('Ordered list of PDF columns (Sr No is always prepended automatically)')
+}).describe('Dynamic column configuration for PDF generation'),
   "pdfStyle": zod.object({
   "pageOrientation": zod.enum(['landscape', 'portrait']).default(listBanksResponsePdfStylePageOrientationDefault),
-  "headerColor1": zod.string().optional().describe('Hex color for first header group (e.g. #FFFF00)'),
-  "headerColor2": zod.string().optional().describe('Hex color for second header group (e.g. #4985E8)'),
+  "headerColor1": zod.string().optional().describe('Default hex color for first header color group (e.g. #FFFF00)'),
+  "headerColor2": zod.string().optional().describe('Default hex color for second header color group (e.g. #4985E8)'),
   "fontSize": zod.number().default(listBanksResponsePdfStyleFontSizeDefault),
-  "rowHeight": zod.number().default(listBanksResponsePdfStyleRowHeightDefault)
+  "rowHeight": zod.number().default(listBanksResponsePdfStyleRowHeightDefault),
+  "headerRowHeight": zod.number().default(listBanksResponsePdfStyleHeaderRowHeightDefault).describe('Height of the column header row')
 }).optional().describe('PDF styling configuration'),
   "auditTypes": zod.array(zod.object({
   "code": zod.string().describe('Audit type code (e.g. POA, TF)'),
@@ -58,9 +64,11 @@ export const ListBanksResponse = zod.array(ListBanksResponseItem)
 /**
  * @summary Create a new bank configuration
  */
+export const createBankBodyColumnMappingColumnsItemDataTypeDefault = `text`;
 export const createBankBodyPdfStylePageOrientationDefault = `landscape`;
 export const createBankBodyPdfStyleFontSizeDefault = 9;
 export const createBankBodyPdfStyleRowHeightDefault = 30.5;
+export const createBankBodyPdfStyleHeaderRowHeightDefault = 22.5;
 export const createBankBodyIsActiveDefault = true;
 
 export const CreateBankBody = zod.object({
@@ -68,19 +76,24 @@ export const CreateBankBody = zod.object({
   "code": zod.string(),
   "description": zod.string().optional(),
   "columnMapping": zod.object({
-  "prospectNo": zod.string().describe('Excel column name for Prospect No'),
-  "cuid": zod.string().describe('Excel column name for CUID'),
-  "tareWeight": zod.string().describe('Excel column name for Tare Weight'),
-  "state": zod.string().describe('Excel column name for State'),
-  "branchCode": zod.string().describe('Excel column name for Branch Code'),
-  "branchName": zod.string().describe('Excel column name for Branch Name')
-}).describe('Maps PDF column names to Excel column names'),
+  "branchGroupBy": zod.string().describe('Excel column name used to group rows by branch (e.g. CurrentBranch)'),
+  "branchNameCol": zod.string().describe('Excel column name for branch name display in PDF header'),
+  "stateCol": zod.string().describe('Excel column name for state display in PDF header'),
+  "columns": zod.array(zod.object({
+  "header": zod.string().describe('Column header text shown in the PDF (use \\n for line breaks)'),
+  "excelColumn": zod.string().nullish().describe('Excel column name to pull data from. Null means this column is blank (filled by hand during audit)'),
+  "width": zod.number().describe('Column width in PDF points'),
+  "dataType": zod.enum(['text', 'number']).default(createBankBodyColumnMappingColumnsItemDataTypeDefault).describe('Affects formatting: number removes trailing .0'),
+  "headerColor": zod.string().nullish().describe('Override header background color for this column (hex). Null uses the default group color.')
+}).describe('A single PDF column definition')).describe('Ordered list of PDF columns (Sr No is always prepended automatically)')
+}).describe('Dynamic column configuration for PDF generation'),
   "pdfStyle": zod.object({
   "pageOrientation": zod.enum(['landscape', 'portrait']).default(createBankBodyPdfStylePageOrientationDefault),
-  "headerColor1": zod.string().optional().describe('Hex color for first header group (e.g. #FFFF00)'),
-  "headerColor2": zod.string().optional().describe('Hex color for second header group (e.g. #4985E8)'),
+  "headerColor1": zod.string().optional().describe('Default hex color for first header color group (e.g. #FFFF00)'),
+  "headerColor2": zod.string().optional().describe('Default hex color for second header color group (e.g. #4985E8)'),
   "fontSize": zod.number().default(createBankBodyPdfStyleFontSizeDefault),
-  "rowHeight": zod.number().default(createBankBodyPdfStyleRowHeightDefault)
+  "rowHeight": zod.number().default(createBankBodyPdfStyleRowHeightDefault),
+  "headerRowHeight": zod.number().default(createBankBodyPdfStyleHeaderRowHeightDefault).describe('Height of the column header row')
 }).optional().describe('PDF styling configuration'),
   "auditTypes": zod.array(zod.object({
   "code": zod.string().describe('Audit type code (e.g. POA, TF)'),
@@ -97,29 +110,36 @@ export const GetBankParams = zod.object({
   "id": zod.coerce.number()
 })
 
+export const getBankResponseColumnMappingColumnsItemDataTypeDefault = `text`;
 export const getBankResponsePdfStylePageOrientationDefault = `landscape`;
 export const getBankResponsePdfStyleFontSizeDefault = 9;
 export const getBankResponsePdfStyleRowHeightDefault = 30.5;
+export const getBankResponsePdfStyleHeaderRowHeightDefault = 22.5;
 
 export const GetBankResponse = zod.object({
   "id": zod.number(),
-  "name": zod.string().describe('Full bank name'),
-  "code": zod.string().describe('Short bank identifier code'),
+  "name": zod.string(),
+  "code": zod.string(),
   "description": zod.string().nullish(),
   "columnMapping": zod.object({
-  "prospectNo": zod.string().describe('Excel column name for Prospect No'),
-  "cuid": zod.string().describe('Excel column name for CUID'),
-  "tareWeight": zod.string().describe('Excel column name for Tare Weight'),
-  "state": zod.string().describe('Excel column name for State'),
-  "branchCode": zod.string().describe('Excel column name for Branch Code'),
-  "branchName": zod.string().describe('Excel column name for Branch Name')
-}).describe('Maps PDF column names to Excel column names'),
+  "branchGroupBy": zod.string().describe('Excel column name used to group rows by branch (e.g. CurrentBranch)'),
+  "branchNameCol": zod.string().describe('Excel column name for branch name display in PDF header'),
+  "stateCol": zod.string().describe('Excel column name for state display in PDF header'),
+  "columns": zod.array(zod.object({
+  "header": zod.string().describe('Column header text shown in the PDF (use \\n for line breaks)'),
+  "excelColumn": zod.string().nullish().describe('Excel column name to pull data from. Null means this column is blank (filled by hand during audit)'),
+  "width": zod.number().describe('Column width in PDF points'),
+  "dataType": zod.enum(['text', 'number']).default(getBankResponseColumnMappingColumnsItemDataTypeDefault).describe('Affects formatting: number removes trailing .0'),
+  "headerColor": zod.string().nullish().describe('Override header background color for this column (hex). Null uses the default group color.')
+}).describe('A single PDF column definition')).describe('Ordered list of PDF columns (Sr No is always prepended automatically)')
+}).describe('Dynamic column configuration for PDF generation'),
   "pdfStyle": zod.object({
   "pageOrientation": zod.enum(['landscape', 'portrait']).default(getBankResponsePdfStylePageOrientationDefault),
-  "headerColor1": zod.string().optional().describe('Hex color for first header group (e.g. #FFFF00)'),
-  "headerColor2": zod.string().optional().describe('Hex color for second header group (e.g. #4985E8)'),
+  "headerColor1": zod.string().optional().describe('Default hex color for first header color group (e.g. #FFFF00)'),
+  "headerColor2": zod.string().optional().describe('Default hex color for second header color group (e.g. #4985E8)'),
   "fontSize": zod.number().default(getBankResponsePdfStyleFontSizeDefault),
-  "rowHeight": zod.number().default(getBankResponsePdfStyleRowHeightDefault)
+  "rowHeight": zod.number().default(getBankResponsePdfStyleRowHeightDefault),
+  "headerRowHeight": zod.number().default(getBankResponsePdfStyleHeaderRowHeightDefault).describe('Height of the column header row')
 }).optional().describe('PDF styling configuration'),
   "auditTypes": zod.array(zod.object({
   "code": zod.string().describe('Audit type code (e.g. POA, TF)'),
@@ -138,28 +158,35 @@ export const UpdateBankParams = zod.object({
   "id": zod.coerce.number()
 })
 
+export const updateBankBodyColumnMappingColumnsItemDataTypeDefault = `text`;
 export const updateBankBodyPdfStylePageOrientationDefault = `landscape`;
 export const updateBankBodyPdfStyleFontSizeDefault = 9;
 export const updateBankBodyPdfStyleRowHeightDefault = 30.5;
+export const updateBankBodyPdfStyleHeaderRowHeightDefault = 22.5;
 
 export const UpdateBankBody = zod.object({
   "name": zod.string().optional(),
   "code": zod.string().optional(),
   "description": zod.string().optional(),
   "columnMapping": zod.object({
-  "prospectNo": zod.string().describe('Excel column name for Prospect No'),
-  "cuid": zod.string().describe('Excel column name for CUID'),
-  "tareWeight": zod.string().describe('Excel column name for Tare Weight'),
-  "state": zod.string().describe('Excel column name for State'),
-  "branchCode": zod.string().describe('Excel column name for Branch Code'),
-  "branchName": zod.string().describe('Excel column name for Branch Name')
-}).optional().describe('Maps PDF column names to Excel column names'),
+  "branchGroupBy": zod.string().describe('Excel column name used to group rows by branch (e.g. CurrentBranch)'),
+  "branchNameCol": zod.string().describe('Excel column name for branch name display in PDF header'),
+  "stateCol": zod.string().describe('Excel column name for state display in PDF header'),
+  "columns": zod.array(zod.object({
+  "header": zod.string().describe('Column header text shown in the PDF (use \\n for line breaks)'),
+  "excelColumn": zod.string().nullish().describe('Excel column name to pull data from. Null means this column is blank (filled by hand during audit)'),
+  "width": zod.number().describe('Column width in PDF points'),
+  "dataType": zod.enum(['text', 'number']).default(updateBankBodyColumnMappingColumnsItemDataTypeDefault).describe('Affects formatting: number removes trailing .0'),
+  "headerColor": zod.string().nullish().describe('Override header background color for this column (hex). Null uses the default group color.')
+}).describe('A single PDF column definition')).describe('Ordered list of PDF columns (Sr No is always prepended automatically)')
+}).optional().describe('Dynamic column configuration for PDF generation'),
   "pdfStyle": zod.object({
   "pageOrientation": zod.enum(['landscape', 'portrait']).default(updateBankBodyPdfStylePageOrientationDefault),
-  "headerColor1": zod.string().optional().describe('Hex color for first header group (e.g. #FFFF00)'),
-  "headerColor2": zod.string().optional().describe('Hex color for second header group (e.g. #4985E8)'),
+  "headerColor1": zod.string().optional().describe('Default hex color for first header color group (e.g. #FFFF00)'),
+  "headerColor2": zod.string().optional().describe('Default hex color for second header color group (e.g. #4985E8)'),
   "fontSize": zod.number().default(updateBankBodyPdfStyleFontSizeDefault),
-  "rowHeight": zod.number().default(updateBankBodyPdfStyleRowHeightDefault)
+  "rowHeight": zod.number().default(updateBankBodyPdfStyleRowHeightDefault),
+  "headerRowHeight": zod.number().default(updateBankBodyPdfStyleHeaderRowHeightDefault).describe('Height of the column header row')
 }).optional().describe('PDF styling configuration'),
   "auditTypes": zod.array(zod.object({
   "code": zod.string().describe('Audit type code (e.g. POA, TF)'),
@@ -168,29 +195,36 @@ export const UpdateBankBody = zod.object({
   "isActive": zod.boolean().optional()
 })
 
+export const updateBankResponseColumnMappingColumnsItemDataTypeDefault = `text`;
 export const updateBankResponsePdfStylePageOrientationDefault = `landscape`;
 export const updateBankResponsePdfStyleFontSizeDefault = 9;
 export const updateBankResponsePdfStyleRowHeightDefault = 30.5;
+export const updateBankResponsePdfStyleHeaderRowHeightDefault = 22.5;
 
 export const UpdateBankResponse = zod.object({
   "id": zod.number(),
-  "name": zod.string().describe('Full bank name'),
-  "code": zod.string().describe('Short bank identifier code'),
+  "name": zod.string(),
+  "code": zod.string(),
   "description": zod.string().nullish(),
   "columnMapping": zod.object({
-  "prospectNo": zod.string().describe('Excel column name for Prospect No'),
-  "cuid": zod.string().describe('Excel column name for CUID'),
-  "tareWeight": zod.string().describe('Excel column name for Tare Weight'),
-  "state": zod.string().describe('Excel column name for State'),
-  "branchCode": zod.string().describe('Excel column name for Branch Code'),
-  "branchName": zod.string().describe('Excel column name for Branch Name')
-}).describe('Maps PDF column names to Excel column names'),
+  "branchGroupBy": zod.string().describe('Excel column name used to group rows by branch (e.g. CurrentBranch)'),
+  "branchNameCol": zod.string().describe('Excel column name for branch name display in PDF header'),
+  "stateCol": zod.string().describe('Excel column name for state display in PDF header'),
+  "columns": zod.array(zod.object({
+  "header": zod.string().describe('Column header text shown in the PDF (use \\n for line breaks)'),
+  "excelColumn": zod.string().nullish().describe('Excel column name to pull data from. Null means this column is blank (filled by hand during audit)'),
+  "width": zod.number().describe('Column width in PDF points'),
+  "dataType": zod.enum(['text', 'number']).default(updateBankResponseColumnMappingColumnsItemDataTypeDefault).describe('Affects formatting: number removes trailing .0'),
+  "headerColor": zod.string().nullish().describe('Override header background color for this column (hex). Null uses the default group color.')
+}).describe('A single PDF column definition')).describe('Ordered list of PDF columns (Sr No is always prepended automatically)')
+}).describe('Dynamic column configuration for PDF generation'),
   "pdfStyle": zod.object({
   "pageOrientation": zod.enum(['landscape', 'portrait']).default(updateBankResponsePdfStylePageOrientationDefault),
-  "headerColor1": zod.string().optional().describe('Hex color for first header group (e.g. #FFFF00)'),
-  "headerColor2": zod.string().optional().describe('Hex color for second header group (e.g. #4985E8)'),
+  "headerColor1": zod.string().optional().describe('Default hex color for first header color group (e.g. #FFFF00)'),
+  "headerColor2": zod.string().optional().describe('Default hex color for second header color group (e.g. #4985E8)'),
   "fontSize": zod.number().default(updateBankResponsePdfStyleFontSizeDefault),
-  "rowHeight": zod.number().default(updateBankResponsePdfStyleRowHeightDefault)
+  "rowHeight": zod.number().default(updateBankResponsePdfStyleRowHeightDefault),
+  "headerRowHeight": zod.number().default(updateBankResponsePdfStyleHeaderRowHeightDefault).describe('Height of the column header row')
 }).optional().describe('PDF styling configuration'),
   "auditTypes": zod.array(zod.object({
   "code": zod.string().describe('Audit type code (e.g. POA, TF)'),
@@ -305,7 +339,7 @@ export const CreateShareLinkParams = zod.object({
 })
 
 export const CreateShareLinkBody = zod.object({
-  "expiresInHours": zod.number().nullish().describe('Hours until the link expires. Null means never expires.')
+  "expiresInHours": zod.number().nullish().describe('Hours until link expires. Null = never expires.')
 })
 
 

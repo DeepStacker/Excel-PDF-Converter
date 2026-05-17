@@ -8,7 +8,7 @@
 
 export interface ShareLinkInput {
   /**
-     * Hours until the link expires. Null means never expires.
+     * Hours until link expires. Null = never expires.
      * @nullable
      */
   expiresInHours?: number | null;

@@ -12,8 +12,10 @@ import { useLocation } from "wouter";
 import { useToast } from "@/hooks/use-toast";
 import { Progress } from "@/components/ui/progress";
 import { useState } from "react";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 
 export default function JobDetail() {
   const [match, params] = useRoute("/jobs/:id");
@@ -24,6 +26,7 @@ export default function JobDetail() {
   
   const [shareUrl, setShareUrl] = useState<string | null>(null);
   const [isShareDialogOpen, setIsShareDialogOpen] = useState(false);
+  const [shareExpiry, setShareExpiry] = useState<string>("never");
 
   const { data: job, isLoading, isError } = useGetJob(id, {
     query: {
@@ -66,19 +69,8 @@ export default function JobDetail() {
   const shareMutation = useCreateShareLink({
     mutation: {
       onSuccess: (data) => {
-        // Construct full URL using window location
         const url = new URL(`/share/${data.token}`, window.location.origin).toString();
         setShareUrl(url);
-        
-        navigator.clipboard.writeText(url)
-          .then(() => {
-            toast({ title: "Share link copied to clipboard" });
-            setIsShareDialogOpen(true);
-          })
-          .catch(() => {
-            toast({ title: "Share link created", description: "Failed to copy automatically." });
-            setIsShareDialogOpen(true);
-          });
       },
       onError: (err) => {
         toast({ title: "Failed to create share link", description: err.message, variant: "destructive" });
@@ -86,12 +78,27 @@ export default function JobDetail() {
     }
   });
 
+  const handleCreateShareLink = () => {
+    let expiresInHours: number | null = null;
+    if (shareExpiry === "24h") expiresInHours = 24;
+    else if (shareExpiry === "7d") expiresInHours = 168;
+    else if (shareExpiry === "30d") expiresInHours = 720;
+    
+    shareMutation.mutate({ id, data: { expiresInHours } });
+  };
+
   const copyShareUrl = () => {
     if (shareUrl) {
       navigator.clipboard.writeText(shareUrl).then(() => {
         toast({ title: "Share link copied to clipboard" });
       });
     }
+  };
+
+  const openShareDialog = () => {
+    setShareUrl(null);
+    setShareExpiry("never");
+    setIsShareDialogOpen(true);
   };
 
   if (isLoading) {
@@ -191,8 +198,7 @@ export default function JobDetail() {
                 <Button 
                   variant="secondary" 
                   className="w-full" 
-                  onClick={() => shareMutation.mutate({ id, data: { expiresInHours: null } })}
-                  disabled={shareMutation.isPending}
+                  onClick={openShareDialog}
                 >
                   <Share2 className="mr-2 h-4 w-4" />
                   Share Files
@@ -252,25 +258,68 @@ export default function JobDetail() {
       </div>
 
       <Dialog open={isShareDialogOpen} onOpenChange={setIsShareDialogOpen}>
-        <DialogContent>
+        <DialogContent className="sm:max-w-md">
           <DialogHeader>
-            <DialogTitle>Share Link Created</DialogTitle>
+            <DialogTitle>Share This Job</DialogTitle>
             <DialogDescription>
-              Anyone with this link can view and download the generated PDFs.
+              Anyone with the link can view and download all generated PDFs.
             </DialogDescription>
           </DialogHeader>
-          <div className="flex items-center space-x-2 mt-4">
-            <Input 
-              value={shareUrl || ""} 
-              readOnly 
-              className="flex-1"
-              onClick={(e) => (e.target as HTMLInputElement).select()}
-            />
-            <Button onClick={copyShareUrl} size="sm" className="shrink-0">
-              <Copy className="h-4 w-4 mr-2" />
-              Copy
-            </Button>
-          </div>
+          
+          {!shareUrl ? (
+            <div className="py-4 space-y-6">
+              <div className="space-y-3">
+                <Label>Link Expiration</Label>
+                <RadioGroup value={shareExpiry} onValueChange={setShareExpiry} className="flex flex-col gap-3">
+                  <div className="flex items-center space-x-3 bg-muted/30 p-3 rounded border">
+                    <RadioGroupItem value="never" id="r1" />
+                    <Label htmlFor="r1" className="font-medium cursor-pointer">Never expires</Label>
+                  </div>
+                  <div className="flex items-center space-x-3 bg-muted/30 p-3 rounded border">
+                    <RadioGroupItem value="24h" id="r2" />
+                    <Label htmlFor="r2" className="font-medium cursor-pointer">24 hours</Label>
+                  </div>
+                  <div className="flex items-center space-x-3 bg-muted/30 p-3 rounded border">
+                    <RadioGroupItem value="7d" id="r3" />
+                    <Label htmlFor="r3" className="font-medium cursor-pointer">7 days</Label>
+                  </div>
+                  <div className="flex items-center space-x-3 bg-muted/30 p-3 rounded border">
+                    <RadioGroupItem value="30d" id="r4" />
+                    <Label htmlFor="r4" className="font-medium cursor-pointer">30 days</Label>
+                  </div>
+                </RadioGroup>
+              </div>
+              
+              <DialogFooter>
+                <Button variant="outline" onClick={() => setIsShareDialogOpen(false)}>Cancel</Button>
+                <Button onClick={handleCreateShareLink} disabled={shareMutation.isPending}>
+                  {shareMutation.isPending ? "Creating..." : "Create Link"}
+                </Button>
+              </DialogFooter>
+            </div>
+          ) : (
+            <div className="py-4 space-y-4">
+              <div className="p-4 bg-green-50 dark:bg-green-900/20 text-green-800 dark:text-green-300 rounded-lg border border-green-200 dark:border-green-800 text-sm mb-4">
+                Share link created successfully!
+                {shareExpiry !== "never" && <span className="block mt-1 opacity-80">Link expires in {shareExpiry.replace('h', ' hours').replace('d', ' days')}.</span>}
+              </div>
+              <div className="flex items-center space-x-2">
+                <Input 
+                  value={shareUrl} 
+                  readOnly 
+                  className="flex-1"
+                  onClick={(e) => (e.target as HTMLInputElement).select()}
+                />
+                <Button onClick={copyShareUrl} size="sm" className="shrink-0">
+                  <Copy className="h-4 w-4 mr-2" />
+                  Copy Link
+                </Button>
+              </div>
+              <DialogFooter className="mt-4">
+                <Button variant="secondary" onClick={() => setIsShareDialogOpen(false)}>Close</Button>
+              </DialogFooter>
+            </div>
+          )}
         </DialogContent>
       </Dialog>
     </div>

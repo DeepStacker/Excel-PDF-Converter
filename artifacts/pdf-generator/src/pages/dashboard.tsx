@@ -1,6 +1,6 @@
 import { useGetStats } from "@workspace/api-client-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { FileText, Building2, CheckCircle2, XCircle, Clock } from "lucide-react";
+import { FileText, Building2, CheckCircle2, XCircle, Clock, UploadCloud, DownloadCloud, Landmark } from "lucide-react";
 import { JobStatusBadge } from "@/components/status-badge";
 import { formatDate } from "@/lib/format";
 import { Link } from "wouter";
@@ -43,6 +43,52 @@ export default function Dashboard() {
           </Button>
         </Link>
       </div>
+
+      {stats.totalJobs === 0 && (
+        <div className="bg-primary/5 border border-primary/20 rounded-2xl p-6 md:p-8">
+          <div className="mb-6">
+            <h2 className="text-2xl font-bold flex items-center gap-2">
+              <span className="text-primary">👋</span> Welcome to AuditGen
+            </h2>
+            <p className="text-muted-foreground mt-1">Follow these three steps to generate your first batch of branch PDFs.</p>
+          </div>
+          
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <Card className="border-none shadow-md">
+              <CardContent className="pt-6">
+                <div className="h-12 w-12 rounded-full bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 flex items-center justify-center font-bold text-lg mb-4">1</div>
+                <h3 className="font-semibold text-lg mb-2">Configure a Bank</h3>
+                <p className="text-sm text-muted-foreground mb-4">Set up mapping rules so the system knows how to read your Excel sheets.</p>
+                <Button variant="outline" asChild className="w-full">
+                  <Link href="/banks/new"><Landmark className="mr-2 h-4 w-4" /> Add Bank</Link>
+                </Button>
+              </CardContent>
+            </Card>
+            
+            <Card className="border-none shadow-md">
+              <CardContent className="pt-6">
+                <div className="h-12 w-12 rounded-full bg-purple-100 dark:bg-purple-900/30 text-purple-600 dark:text-purple-400 flex items-center justify-center font-bold text-lg mb-4">2</div>
+                <h3 className="font-semibold text-lg mb-2">Upload Excel File</h3>
+                <p className="text-sm text-muted-foreground mb-4">Select your bank, upload a data file, and we'll process it automatically.</p>
+                <Button variant="outline" asChild className="w-full">
+                  <Link href="/generate"><UploadCloud className="mr-2 h-4 w-4" /> Upload File</Link>
+                </Button>
+              </CardContent>
+            </Card>
+
+            <Card className="border-none shadow-md">
+              <CardContent className="pt-6">
+                <div className="h-12 w-12 rounded-full bg-green-100 dark:bg-green-900/30 text-green-600 dark:text-green-400 flex items-center justify-center font-bold text-lg mb-4">3</div>
+                <h3 className="font-semibold text-lg mb-2">Download PDFs</h3>
+                <p className="text-sm text-muted-foreground mb-4">Get a ZIP file containing perfectly formatted PDFs for every branch.</p>
+                <Button variant="secondary" disabled className="w-full">
+                  <DownloadCloud className="mr-2 h-4 w-4" /> Download
+                </Button>
+              </CardContent>
+            </Card>
+          </div>
+        </div>
+      )}
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
         {statCards.map((stat, i) => (

@@ -10,21 +10,50 @@ export interface HealthStatus {
 }
 
 /**
- * Maps PDF column names to Excel column names
+ * Affects formatting: number removes trailing .0
+ */
+export type ColumnConfigDataType = typeof ColumnConfigDataType[keyof typeof ColumnConfigDataType];
+
+
+export const ColumnConfigDataType = {
+  text: 'text',
+  number: 'number',
+} as const;
+
+/**
+ * A single PDF column definition
+ */
+export interface ColumnConfig {
+  /** Column header text shown in the PDF (use \n for line breaks) */
+  header: string;
+  /**
+     * Excel column name to pull data from. Null means this column is blank (filled by hand during audit)
+     * @nullable
+     */
+  excelColumn?: string | null;
+  /** Column width in PDF points */
+  width: number;
+  /** Affects formatting: number removes trailing .0 */
+  dataType?: ColumnConfigDataType;
+  /**
+     * Override header background color for this column (hex). Null uses the default group color.
+     * @nullable
+     */
+  headerColor?: string | null;
+}
+
+/**
+ * Dynamic column configuration for PDF generation
  */
 export interface ColumnMapping {
-  /** Excel column name for Prospect No */
-  prospectNo: string;
-  /** Excel column name for CUID */
-  cuid: string;
-  /** Excel column name for Tare Weight */
-  tareWeight: string;
-  /** Excel column name for State */
-  state: string;
-  /** Excel column name for Branch Code */
-  branchCode: string;
-  /** Excel column name for Branch Name */
-  branchName: string;
+  /** Excel column name used to group rows by branch (e.g. CurrentBranch) */
+  branchGroupBy: string;
+  /** Excel column name for branch name display in PDF header */
+  branchNameCol: string;
+  /** Excel column name for state display in PDF header */
+  stateCol: string;
+  /** Ordered list of PDF columns (Sr No is always prepended automatically) */
+  columns: ColumnConfig[];
 }
 
 export type PdfStylePageOrientation = typeof PdfStylePageOrientation[keyof typeof PdfStylePageOrientation];
@@ -40,12 +69,14 @@ export const PdfStylePageOrientation = {
  */
 export interface PdfStyle {
   pageOrientation?: PdfStylePageOrientation;
-  /** Hex color for first header group (e.g. #FFFF00) */
+  /** Default hex color for first header color group (e.g. #FFFF00) */
   headerColor1?: string;
-  /** Hex color for second header group (e.g. #4985E8) */
+  /** Default hex color for second header color group (e.g. #4985E8) */
   headerColor2?: string;
   fontSize?: number;
   rowHeight?: number;
+  /** Height of the column header row */
+  headerRowHeight?: number;
 }
 
 export interface AuditTypeConfig {
@@ -57,9 +88,7 @@ export interface AuditTypeConfig {
 
 export interface Bank {
   id: number;
-  /** Full bank name */
   name: string;
-  /** Short bank identifier code */
   code: string;
   /** @nullable */
   description?: string | null;
@@ -138,7 +167,7 @@ export interface JobInput {
 
 export interface ShareLinkInput {
   /**
-     * Hours until the link expires. Null means never expires.
+     * Hours until link expires. Null = never expires.
      * @nullable
      */
   expiresInHours?: number | null;

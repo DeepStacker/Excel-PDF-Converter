@@ -12,10 +12,12 @@ import type { PdfStylePageOrientation } from './pdfStylePageOrientation';
  */
 export interface PdfStyle {
   pageOrientation?: PdfStylePageOrientation;
-  /** Hex color for first header group (e.g. #FFFF00) */
+  /** Default hex color for first header color group (e.g. #FFFF00) */
   headerColor1?: string;
-  /** Hex color for second header group (e.g. #4985E8) */
+  /** Default hex color for second header color group (e.g. #4985E8) */
   headerColor2?: string;
   fontSize?: number;
   rowHeight?: number;
+  /** Height of the column header row */
+  headerRowHeight?: number;
 }

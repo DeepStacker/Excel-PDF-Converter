@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRoute, useLocation } from "wouter";
 import { useForm, useFieldArray } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -6,29 +6,38 @@ import * as z from "zod";
 import { useGetBank, useCreateBank, useUpdateBank, getListBanksQueryKey, getGetBankQueryKey, getGetStatsQueryKey } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Form, FormControl, FormDescription, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
+import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Plus, Trash2, Loader2, ArrowLeft } from "lucide-react";
+import { Plus, Trash2, Loader2, ArrowLeft, GripVertical, FileSpreadsheet, FileBox } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { Separator } from "@/components/ui/separator";
+
+const columnConfigSchema = z.object({
+  header: z.string().min(1, "Header text is required"),
+  excelColumn: z.string().nullable().default(null),
+  width: z.coerce.number().min(20).max(400).default(80),
+  dataType: z.enum(["text", "number"]).default("text"),
+  headerColor: z.string().nullable().optional(),
+});
+
+const columnMappingSchema = z.object({
+  branchGroupBy: z.string().min(1, "Required"),
+  branchNameCol: z.string().min(1, "Required"),
+  stateCol: z.string().min(1, "Required"),
+  columns: z.array(columnConfigSchema).min(1, "At least one column required"),
+});
 
 const formSchema = z.object({
   name: z.string().min(2, "Name must be at least 2 characters"),
   code: z.string().min(2, "Code must be at least 2 characters").max(10, "Code is too long"),
   description: z.string().optional(),
   isActive: z.boolean().default(true),
-  columnMapping: z.object({
-    prospectNo: z.string().min(1, "Required"),
-    cuid: z.string().min(1, "Required"),
-    tareWeight: z.string().min(1, "Required"),
-    state: z.string().min(1, "Required"),
-    branchCode: z.string().min(1, "Required"),
-    branchName: z.string().min(1, "Required"),
-  }),
+  columnMapping: columnMappingSchema,
   pdfStyle: z.object({
     pageOrientation: z.enum(["portrait", "landscape"]),
     headerColor1: z.string().regex(/^#[0-9A-Fa-f]{6}$/, "Must be a valid hex color"),
@@ -50,12 +59,17 @@ const defaultValues: FormValues = {
   description: "",
   isActive: true,
   columnMapping: {
-    prospectNo: "Prospect No",
-    cuid: "CUID",
-    tareWeight: "Tare Weight",
-    state: "State",
-    branchCode: "Branch Code",
-    branchName: "Branch Name",
+    branchGroupBy: "",
+    branchNameCol: "",
+    stateCol: "",
+    columns: [
+      { header: "Prospectno", excelColumn: "Prospectno", width: 101, dataType: "text" },
+      { header: "CUID", excelColumn: "CUID", width: 118, dataType: "text" },
+      { header: "Tare Weight\nas per Bank", excelColumn: "Tare Weight", width: 60, dataType: "number" },
+      { header: "Tare Weight as\nper Audit", excelColumn: null, width: 67, dataType: "text" },
+      { header: "Purity Check - 18K and\nabove 18K or Below 18K", excelColumn: null, width: 125, dataType: "text" },
+      { header: "Remarks", excelColumn: null, width: 247, dataType: "text" },
+    ],
   },
   pdfStyle: {
     pageOrientation: "portrait",
@@ -118,6 +132,11 @@ export default function BankForm() {
     name: "auditTypes",
   });
 
+  const { fields: columnFields, append: appendColumn, remove: removeColumn, move: moveColumn } = useFieldArray({
+    control: form.control,
+    name: "columnMapping.columns",
+  });
+
   const isFormSetRef = useRef(false);
 
   useEffect(() => {
@@ -128,12 +147,16 @@ export default function BankForm() {
         description: bank.description || "",
         isActive: bank.isActive,
         columnMapping: {
-          prospectNo: bank.columnMapping.prospectNo,
-          cuid: bank.columnMapping.cuid,
-          tareWeight: bank.columnMapping.tareWeight,
-          state: bank.columnMapping.state,
-          branchCode: bank.columnMapping.branchCode,
-          branchName: bank.columnMapping.branchName,
+          branchGroupBy: bank.columnMapping.branchGroupBy || "",
+          branchNameCol: bank.columnMapping.branchNameCol || "",
+          stateCol: bank.columnMapping.stateCol || "",
+          columns: bank.columnMapping.columns?.map(c => ({
+            ...c,
+            excelColumn: c.excelColumn || null,
+            dataType: c.dataType || "text",
+            width: c.width || 80,
+            headerColor: c.headerColor || null
+          })) || [],
         },
         pdfStyle: {
           pageOrientation: bank.pdfStyle?.pageOrientation || "portrait",
@@ -142,21 +165,52 @@ export default function BankForm() {
           fontSize: bank.pdfStyle?.fontSize || 10,
           rowHeight: bank.pdfStyle?.rowHeight || 20,
         },
-        auditTypes: bank.auditTypes,
+        auditTypes: bank.auditTypes || [],
       });
       isFormSetRef.current = true;
     }
   }, [bank, isEdit, form]);
 
   const onSubmit = (data: FormValues) => {
+    // Coerce empty strings to null for excelColumn
+    const payload = {
+      ...data,
+      columnMapping: {
+        ...data.columnMapping,
+        columns: data.columnMapping.columns.map(col => ({
+          ...col,
+          excelColumn: col.excelColumn?.trim() ? col.excelColumn : null,
+        }))
+      }
+    };
+
     if (isEdit) {
-      updateMutation.mutate({ id, data });
+      updateMutation.mutate({ id, data: payload as any });
     } else {
-      createMutation.mutate({ data });
+      createMutation.mutate({ data: payload as any });
     }
   };
 
   const isPending = createMutation.isPending || updateMutation.isPending;
+
+  const loadTemplatePOA = () => {
+    form.setValue("columnMapping.columns", [
+      { header: "Prospectno", excelColumn: "Prospectno", width: 101, dataType: "text" },
+      { header: "CUID", excelColumn: "CUID", width: 118, dataType: "text" },
+      { header: "Tare Weight\\nas per Bank", excelColumn: "Tare Weight", width: 60, dataType: "number" },
+      { header: "Tare Weight as\\nper Audit", excelColumn: null, width: 67, dataType: "text" },
+      { header: "Purity Check - 18K and\\nabove 18K or Below 18K", excelColumn: null, width: 125, dataType: "text" },
+      { header: "Remarks", excelColumn: null, width: 247, dataType: "text" },
+    ]);
+  };
+
+  const loadTemplateSimple = () => {
+    form.setValue("columnMapping.columns", [
+      { header: "ID", excelColumn: "ID", width: 80, dataType: "text" },
+      { header: "Description", excelColumn: "Description", width: 150, dataType: "text" },
+      { header: "Notes", excelColumn: null, width: 200, dataType: "text" },
+    ]);
+  };
 
   if (isEdit && isLoadingBank) {
     return <div className="space-y-4 animate-pulse">
@@ -166,7 +220,7 @@ export default function BankForm() {
   }
 
   return (
-    <div className="max-w-4xl mx-auto space-y-6">
+    <div className="max-w-5xl mx-auto space-y-6">
       <div className="flex items-center gap-4">
         <Button variant="ghost" size="icon" onClick={() => setLocation("/banks")} className="shrink-0">
           <ArrowLeft className="h-4 w-4" />
@@ -223,20 +277,185 @@ export default function BankForm() {
           </Card>
 
           <Card className="shadow-sm border-muted/50">
-            <CardHeader>
-              <CardTitle>Column Mapping</CardTitle>
-              <CardDescription>Exact names of the columns in the source Excel file.</CardDescription>
+            <CardHeader className="flex flex-row items-center justify-between">
+              <div>
+                <CardTitle>Column Builder</CardTitle>
+                <CardDescription>Define how columns from Excel map to your generated PDFs.</CardDescription>
+              </div>
+              {!isEdit && (
+                <div className="flex gap-2">
+                  <Button type="button" variant="outline" size="sm" onClick={loadTemplatePOA}>
+                    Template: POA
+                  </Button>
+                  <Button type="button" variant="outline" size="sm" onClick={loadTemplateSimple}>
+                    Template: Simple
+                  </Button>
+                </div>
+              )}
             </CardHeader>
-            <CardContent className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-              {['prospectNo', 'cuid', 'tareWeight', 'state', 'branchCode', 'branchName'].map((col) => (
-                <FormField key={col} control={form.control} name={`columnMapping.${col}` as any} render={({ field }) => (
+            <CardContent className="space-y-6">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-6 bg-muted/30 p-4 rounded-lg border">
+                <FormField control={form.control} name="columnMapping.branchGroupBy" render={({ field }) => (
                   <FormItem>
-                    <FormLabel className="capitalize">{col.replace(/([A-Z])/g, ' $1').trim()}</FormLabel>
-                    <FormControl><Input {...field} /></FormControl>
+                    <FormLabel>Branch Grouping Column</FormLabel>
+                    <FormControl><Input placeholder="e.g. CurrentBranch" {...field} /></FormControl>
+                    <FormDescription>Excel column defining separate branches.</FormDescription>
                     <FormMessage />
                   </FormItem>
                 )} />
-              ))}
+                <FormField control={form.control} name="columnMapping.branchNameCol" render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Branch Name Column</FormLabel>
+                    <FormControl><Input placeholder="e.g. Branch Name" {...field} /></FormControl>
+                    <FormDescription>Shown in PDF header.</FormDescription>
+                    <FormMessage />
+                  </FormItem>
+                )} />
+                <FormField control={form.control} name="columnMapping.stateCol" render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>State Column</FormLabel>
+                    <FormControl><Input placeholder="e.g. State" {...field} /></FormControl>
+                    <FormDescription>Shown in PDF header.</FormDescription>
+                    <FormMessage />
+                  </FormItem>
+                )} />
+              </div>
+
+              <div className="space-y-4">
+                <h3 className="text-sm font-medium text-foreground">PDF Columns</h3>
+                <div className="space-y-3">
+                  {columnFields.map((field, index) => {
+                    const isExcelSource = form.watch(`columnMapping.columns.${index}.excelColumn`) !== null;
+                    
+                    return (
+                      <div 
+                        key={field.id} 
+                        className={`flex gap-3 items-start p-4 border rounded-xl bg-card transition-colors ${
+                          isExcelSource ? "border-l-4 border-l-primary" : "border-l-4 border-l-muted-foreground/30"
+                        }`}
+                      >
+                        <div className="mt-8 text-muted-foreground/50 cursor-grab active:cursor-grabbing">
+                          <GripVertical className="h-5 w-5" />
+                        </div>
+                        
+                        <div className="flex-1 grid grid-cols-12 gap-4">
+                          <FormField control={form.control} name={`columnMapping.columns.${index}.header`} render={({ field }) => (
+                            <FormItem className="col-span-12 md:col-span-3">
+                              <FormLabel className="text-xs">PDF Header Text</FormLabel>
+                              <FormControl><Input placeholder="Header text (\n for break)" {...field} /></FormControl>
+                              <FormMessage />
+                            </FormItem>
+                          )} />
+
+                          <div className="col-span-12 md:col-span-4 flex flex-col gap-2">
+                            <Label className="text-xs">Source Mode</Label>
+                            <div className="flex items-center gap-2">
+                              <Button
+                                type="button"
+                                variant={isExcelSource ? "default" : "outline"}
+                                size="sm"
+                                className="w-full"
+                                onClick={() => form.setValue(`columnMapping.columns.${index}.excelColumn`, "")}
+                              >
+                                <FileSpreadsheet className="h-4 w-4 mr-2" /> From Excel
+                              </Button>
+                              <Button
+                                type="button"
+                                variant={!isExcelSource ? "secondary" : "outline"}
+                                size="sm"
+                                className="w-full"
+                                onClick={() => {
+                                  form.setValue(`columnMapping.columns.${index}.excelColumn`, null);
+                                  form.clearErrors(`columnMapping.columns.${index}.excelColumn`);
+                                }}
+                              >
+                                <FileBox className="h-4 w-4 mr-2" /> Blank (Hand-fill)
+                              </Button>
+                            </div>
+
+                            {isExcelSource ? (
+                              <FormField control={form.control} name={`columnMapping.columns.${index}.excelColumn`} render={({ field }) => (
+                                <FormItem>
+                                  <FormControl>
+                                    <Input placeholder="Excel Column Name" value={field.value || ""} onChange={field.onChange} />
+                                  </FormControl>
+                                  <FormMessage />
+                                </FormItem>
+                              )} />
+                            ) : (
+                              <div className="text-xs text-muted-foreground mt-2 text-center bg-muted/30 py-1.5 rounded border">
+                                Empty in PDF for manual entry
+                              </div>
+                            )}
+                          </div>
+
+                          <FormField control={form.control} name={`columnMapping.columns.${index}.width`} render={({ field }) => (
+                            <FormItem className="col-span-6 md:col-span-2">
+                              <FormLabel className="text-xs">Width (pt)</FormLabel>
+                              <FormControl><Input type="number" {...field} /></FormControl>
+                              <FormMessage />
+                            </FormItem>
+                          )} />
+
+                          <FormField control={form.control} name={`columnMapping.columns.${index}.dataType`} render={({ field }) => (
+                            <FormItem className="col-span-6 md:col-span-2">
+                              <FormLabel className="text-xs">Data Type</FormLabel>
+                              <Select onValueChange={field.onChange} defaultValue={field.value}>
+                                <FormControl><SelectTrigger><SelectValue /></SelectTrigger></FormControl>
+                                <SelectContent>
+                                  <SelectItem value="text">Text</SelectItem>
+                                  <SelectItem value="number">Number</SelectItem>
+                                </SelectContent>
+                              </Select>
+                              <FormMessage />
+                            </FormItem>
+                          )} />
+
+                          <FormField control={form.control} name={`columnMapping.columns.${index}.headerColor`} render={({ field }) => (
+                            <FormItem className="col-span-12 md:col-span-1">
+                              <FormLabel className="text-xs">Color</FormLabel>
+                              <FormControl>
+                                <div className="flex h-10 w-full rounded-md border items-center p-1 cursor-pointer overflow-hidden relative">
+                                  <input 
+                                    type="color" 
+                                    value={field.value || "#ffffff"} 
+                                    onChange={field.onChange} 
+                                    className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                                  />
+                                  <div className="w-full h-full rounded-sm border shadow-sm" style={{ backgroundColor: field.value || "transparent" }} />
+                                </div>
+                              </FormControl>
+                              <FormMessage />
+                            </FormItem>
+                          )} />
+                        </div>
+
+                        <div className="mt-8">
+                          <Button 
+                            type="button" 
+                            variant="ghost" 
+                            size="icon" 
+                            className="text-destructive shrink-0 hover:bg-destructive/10" 
+                            onClick={() => removeColumn(index)}
+                            disabled={columnFields.length === 1}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+                
+                <Button 
+                  type="button" 
+                  variant="outline" 
+                  className="w-full mt-4" 
+                  onClick={() => appendColumn({ header: "", excelColumn: "", width: 80, dataType: "text" })}
+                >
+                  <Plus className="h-4 w-4 mr-2" /> Add Column
+                </Button>
+              </div>
             </CardContent>
           </Card>
 
@@ -333,7 +552,7 @@ export default function BankForm() {
                           type="button" 
                           variant="ghost" 
                           size="icon" 
-                          className="text-destructive shrink-0" 
+                          className="text-destructive shrink-0 hover:bg-destructive/10" 
                           onClick={() => removeAudit(index)}
                           disabled={auditFields.length === 1}
                         >
@@ -350,9 +569,9 @@ export default function BankForm() {
             </Card>
           </div>
 
-          <div className="flex justify-end gap-4">
+          <div className="flex justify-end gap-4 sticky bottom-4 bg-background/80 backdrop-blur p-4 rounded-xl border shadow-sm">
             <Button type="button" variant="outline" onClick={() => setLocation("/banks")}>Cancel</Button>
-            <Button type="submit" disabled={isPending}>
+            <Button type="submit" size="lg" disabled={isPending}>
               {isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
               {isEdit ? "Save Changes" : "Create Bank Configuration"}
             </Button>

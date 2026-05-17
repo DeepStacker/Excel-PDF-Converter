@@ -10,6 +10,8 @@ export * from './auditTypeConfig';
 export * from './bank';
 export * from './bankInput';
 export * from './bankUpdate';
+export * from './columnConfig';
+export * from './columnConfigDataType';
 export * from './columnMapping';
 export * from './generatedFile';
 export * from './healthStatus';

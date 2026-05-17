@@ -5,21 +5,18 @@
  * PDF Generator API - Upload Excel files and generate bank branch PDFs
  * OpenAPI spec version: 0.1.0
  */
+import type { ColumnConfig } from './columnConfig';
 
 /**
- * Maps PDF column names to Excel column names
+ * Dynamic column configuration for PDF generation
  */
 export interface ColumnMapping {
-  /** Excel column name for Prospect No */
-  prospectNo: string;
-  /** Excel column name for CUID */
-  cuid: string;
-  /** Excel column name for Tare Weight */
-  tareWeight: string;
-  /** Excel column name for State */
-  state: string;
-  /** Excel column name for Branch Code */
-  branchCode: string;
-  /** Excel column name for Branch Name */
-  branchName: string;
+  /** Excel column name used to group rows by branch (e.g. CurrentBranch) */
+  branchGroupBy: string;
+  /** Excel column name for branch name display in PDF header */
+  branchNameCol: string;
+  /** Excel column name for state display in PDF header */
+  stateCol: string;
+  /** Ordered list of PDF columns (Sr No is always prepended automatically) */
+  columns: ColumnConfig[];
 }

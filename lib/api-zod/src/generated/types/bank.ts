@@ -11,9 +11,7 @@ import type { PdfStyle } from './pdfStyle';
 
 export interface Bank {
   id: number;
-  /** Full bank name */
   name: string;
-  /** Short bank identifier code */
   code: string;
   /** @nullable */
   description?: string | null;

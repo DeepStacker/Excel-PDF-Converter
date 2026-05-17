@@ -22,7 +22,6 @@ paths:
       operationId: healthCheck
       tags: [health]
       summary: Health check
-      description: Returns server health status
       responses:
         "200":
           description: Healthy
@@ -282,35 +281,54 @@ components:
       required:
         - status
 
+    ColumnConfig:
+      type: object
+      description: A single PDF column definition
+      required:
+        - header
+        - width
+      properties:
+        header:
+          type: string
+          description: "Column header text shown in the PDF (use \\n for line breaks)"
+        excelColumn:
+          type: ["string", "null"]
+          description: "Excel column name to pull data from. Null means this column is blank (filled by hand during audit)"
+        width:
+          type: number
+          description: Column width in PDF points
+        dataType:
+          type: string
+          enum: [text, number]
+          default: text
+          description: "Affects formatting: number removes trailing .0"
+        headerColor:
+          type: ["string", "null"]
+          description: "Override header background color for this column (hex). Null uses the default group color."
+
     ColumnMapping:
       type: object
-      description: Maps PDF column names to Excel column names
+      description: Dynamic column configuration for PDF generation
       required:
-        - prospectNo
-        - cuid
-        - tareWeight
-        - state
-        - branchCode
-        - branchName
+        - branchGroupBy
+        - branchNameCol
+        - stateCol
+        - columns
       properties:
-        prospectNo:
+        branchGroupBy:
           type: string
-          description: Excel column name for Prospect No
-        cuid:
+          description: "Excel column name used to group rows by branch (e.g. CurrentBranch)"
+        branchNameCol:
           type: string
-          description: Excel column name for CUID
-        tareWeight:
+          description: "Excel column name for branch name display in PDF header"
+        stateCol:
           type: string
-          description: Excel column name for Tare Weight
-        state:
-          type: string
-          description: Excel column name for State
-        branchCode:
-          type: string
-          description: Excel column name for Branch Code
-        branchName:
-          type: string
-          description: Excel column name for Branch Name
+          description: "Excel column name for state display in PDF header"
+        columns:
+          type: array
+          description: "Ordered list of PDF columns (Sr No is always prepended automatically)"
+          items:
+            $ref: "#/components/schemas/ColumnConfig"
 
     PdfStyle:
       type: object
@@ -322,16 +340,20 @@ components:
           default: landscape
         headerColor1:
           type: string
-          description: "Hex color for first header group (e.g. #FFFF00)"
+          description: "Default hex color for first header color group (e.g. #FFFF00)"
         headerColor2:
           type: string
-          description: "Hex color for second header group (e.g. #4985E8)"
+          description: "Default hex color for second header color group (e.g. #4985E8)"
         fontSize:
           type: number
           default: 9
         rowHeight:
           type: number
           default: 30.5
+        headerRowHeight:
+          type: number
+          default: 22.5
+          description: Height of the column header row
 
     AuditTypeConfig:
       type: object
@@ -362,10 +384,8 @@ components:
           type: integer
         name:
           type: string
-          description: Full bank name
         code:
           type: string
-          description: Short bank identifier code
         description:
           type: ["string", "null"]
         columnMapping:
@@ -518,7 +538,7 @@ components:
       properties:
         expiresInHours:
           type: ["integer", "null"]
-          description: "Hours until the link expires. Null means never expires."
+          description: "Hours until link expires. Null = never expires."
 
     ShareLink:
       type: object
