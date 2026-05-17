@@ -3,13 +3,19 @@ info:
   # Do not change the title, if the title changes, the import paths will be broken
   title: Api
   version: 0.1.0
-  description: API specification
+  description: PDF Generator API - Upload Excel files and generate bank branch PDFs
 servers:
   - url: /api
     description: Base API path
 tags:
   - name: health
     description: Health operations
+  - name: banks
+    description: Bank configuration management
+  - name: jobs
+    description: PDF generation jobs
+  - name: stats
+    description: Dashboard statistics
 paths:
   /healthz:
     get:
@@ -24,6 +30,200 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+
+  /banks:
+    get:
+      operationId: listBanks
+      tags: [banks]
+      summary: List all bank configurations
+      responses:
+        "200":
+          description: List of banks
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Bank"
+    post:
+      operationId: createBank
+      tags: [banks]
+      summary: Create a new bank configuration
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BankInput"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Bank"
+
+  /banks/{id}:
+    get:
+      operationId: getBank
+      tags: [banks]
+      summary: Get a bank configuration
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Bank configuration
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Bank"
+        "404":
+          description: Not found
+    put:
+      operationId: updateBank
+      tags: [banks]
+      summary: Update a bank configuration
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BankUpdate"
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Bank"
+        "404":
+          description: Not found
+    delete:
+      operationId: deleteBank
+      tags: [banks]
+      summary: Delete a bank configuration
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "204":
+          description: Deleted
+        "404":
+          description: Not found
+
+  /jobs:
+    get:
+      operationId: listJobs
+      tags: [jobs]
+      summary: List all PDF generation jobs
+      responses:
+        "200":
+          description: List of jobs
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Job"
+    post:
+      operationId: createJob
+      tags: [jobs]
+      summary: Upload Excel and generate PDFs
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: "#/components/schemas/JobInput"
+      responses:
+        "201":
+          description: Job created and processing
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Job"
+
+  /jobs/{id}:
+    get:
+      operationId: getJob
+      tags: [jobs]
+      summary: Get a job with its generated files
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Job details with files
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JobDetail"
+        "404":
+          description: Not found
+    delete:
+      operationId: deleteJob
+      tags: [jobs]
+      summary: Delete a job and its files
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "204":
+          description: Deleted
+        "404":
+          description: Not found
+
+  /jobs/{id}/retry:
+    post:
+      operationId: retryJob
+      tags: [jobs]
+      summary: Retry a failed job
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Job restarted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Job"
+
+  /stats:
+    get:
+      operationId: getStats
+      tags: [stats]
+      summary: Get dashboard statistics
+      responses:
+        "200":
+          description: Dashboard stats
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Stats"
+
 components:
   schemas:
     HealthStatus:
@@ -34,3 +234,258 @@ components:
       required:
         - status
 
+    ColumnMapping:
+      type: object
+      description: Maps PDF column names to Excel column names
+      required:
+        - prospectNo
+        - cuid
+        - tareWeight
+        - state
+        - branchCode
+        - branchName
+      properties:
+        prospectNo:
+          type: string
+          description: Excel column name for Prospect No
+        cuid:
+          type: string
+          description: Excel column name for CUID
+        tareWeight:
+          type: string
+          description: Excel column name for Tare Weight
+        state:
+          type: string
+          description: Excel column name for State
+        branchCode:
+          type: string
+          description: Excel column name for Branch Code
+        branchName:
+          type: string
+          description: Excel column name for Branch Name
+
+    PdfStyle:
+      type: object
+      description: PDF styling configuration
+      properties:
+        pageOrientation:
+          type: string
+          enum: [landscape, portrait]
+          default: landscape
+        headerColor1:
+          type: string
+          description: "Hex color for first header group (e.g. #FFFF00)"
+        headerColor2:
+          type: string
+          description: "Hex color for second header group (e.g. #4985E8)"
+        fontSize:
+          type: number
+          default: 9
+        rowHeight:
+          type: number
+          default: 30.5
+
+    AuditTypeConfig:
+      type: object
+      required:
+        - code
+        - label
+      properties:
+        code:
+          type: string
+          description: "Audit type code (e.g. POA, TF)"
+        label:
+          type: string
+          description: "Human-readable label (e.g. Physical Verification)"
+
+    Bank:
+      type: object
+      required:
+        - id
+        - name
+        - code
+        - columnMapping
+        - auditTypes
+        - isActive
+        - createdAt
+        - updatedAt
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+          description: Full bank name
+        code:
+          type: string
+          description: Short bank identifier code
+        description:
+          type: ["string", "null"]
+        columnMapping:
+          $ref: "#/components/schemas/ColumnMapping"
+        pdfStyle:
+          $ref: "#/components/schemas/PdfStyle"
+        auditTypes:
+          type: array
+          items:
+            $ref: "#/components/schemas/AuditTypeConfig"
+        isActive:
+          type: boolean
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    BankInput:
+      type: object
+      required:
+        - name
+        - code
+        - columnMapping
+        - auditTypes
+      properties:
+        name:
+          type: string
+        code:
+          type: string
+        description:
+          type: string
+        columnMapping:
+          $ref: "#/components/schemas/ColumnMapping"
+        pdfStyle:
+          $ref: "#/components/schemas/PdfStyle"
+        auditTypes:
+          type: array
+          items:
+            $ref: "#/components/schemas/AuditTypeConfig"
+        isActive:
+          type: boolean
+          default: true
+
+    BankUpdate:
+      type: object
+      properties:
+        name:
+          type: string
+        code:
+          type: string
+        description:
+          type: string
+        columnMapping:
+          $ref: "#/components/schemas/ColumnMapping"
+        pdfStyle:
+          $ref: "#/components/schemas/PdfStyle"
+        auditTypes:
+          type: array
+          items:
+            $ref: "#/components/schemas/AuditTypeConfig"
+        isActive:
+          type: boolean
+
+    GeneratedFile:
+      type: object
+      required:
+        - filename
+        - branchCode
+        - branchName
+        - rowCount
+        - downloadUrl
+      properties:
+        filename:
+          type: string
+        branchCode:
+          type: string
+        branchName:
+          type: string
+        rowCount:
+          type: integer
+        downloadUrl:
+          type: string
+        fileSize:
+          type: ["integer", "null"]
+
+    Job:
+      type: object
+      required:
+        - id
+        - bankId
+        - bankName
+        - auditType
+        - status
+        - originalFilename
+        - fileCount
+        - createdAt
+        - updatedAt
+      properties:
+        id:
+          type: integer
+        bankId:
+          type: integer
+        bankName:
+          type: string
+        auditType:
+          type: string
+        status:
+          type: string
+          enum: [pending, processing, completed, failed]
+        originalFilename:
+          type: string
+        fileCount:
+          type: integer
+        errorMessage:
+          type: ["string", "null"]
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    JobDetail:
+      allOf:
+        - $ref: "#/components/schemas/Job"
+        - type: object
+          properties:
+            files:
+              type: array
+              items:
+                $ref: "#/components/schemas/GeneratedFile"
+            downloadAllUrl:
+              type: ["string", "null"]
+
+    JobInput:
+      type: object
+      required:
+        - bankId
+        - auditType
+      properties:
+        bankId:
+          type: integer
+        auditType:
+          type: string
+
+    Stats:
+      type: object
+      required:
+        - totalJobs
+        - completedJobs
+        - failedJobs
+        - totalPdfsGenerated
+        - totalBanks
+        - recentJobs
+      properties:
+        totalJobs:
+          type: integer
+        completedJobs:
+          type: integer
+        failedJobs:
+          type: integer
+        totalPdfsGenerated:
+          type: integer
+        totalBanks:
+          type: integer
+        recentJobs:
+          type: array
+          items:
+            $ref: "#/components/schemas/Job"

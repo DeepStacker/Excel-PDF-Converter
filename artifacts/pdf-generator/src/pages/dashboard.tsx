@@ -1,0 +1,111 @@
+import { useGetStats } from "@workspace/api-client-react";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { FileText, Building2, CheckCircle2, XCircle, Clock } from "lucide-react";
+import { JobStatusBadge } from "@/components/status-badge";
+import { formatDate } from "@/lib/format";
+import { Link } from "wouter";
+import { Button } from "@/components/ui/button";
+
+export default function Dashboard() {
+  const { data: stats, isLoading, isError } = useGetStats();
+
+  if (isLoading) {
+    return <div className="space-y-6 animate-pulse">
+      <div className="h-8 w-48 bg-muted rounded"></div>
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
+        {[...Array(5)].map((_, i) => <div key={i} className="h-32 bg-muted rounded-xl"></div>)}
+      </div>
+    </div>;
+  }
+
+  if (isError || !stats) {
+    return <div className="text-destructive">Failed to load dashboard statistics.</div>;
+  }
+
+  const statCards = [
+    { title: "Total Jobs", value: stats.totalJobs, icon: FileText },
+    { title: "Completed", value: stats.completedJobs, icon: CheckCircle2, className: "text-green-600 dark:text-green-400" },
+    { title: "Failed", value: stats.failedJobs, icon: XCircle, className: "text-destructive" },
+    { title: "PDFs Generated", value: stats.totalPdfsGenerated, icon: FileText },
+    { title: "Active Banks", value: stats.totalBanks, icon: Building2 },
+  ];
+
+  return (
+    <div className="space-y-8">
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-3xl font-bold tracking-tight">Dashboard</h1>
+          <p className="text-muted-foreground mt-1">Overview of PDF generation activity.</p>
+        </div>
+        <Link href="/generate">
+          <Button size="lg" className="font-semibold shadow-sm">
+            Generate PDFs
+          </Button>
+        </Link>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
+        {statCards.map((stat, i) => (
+          <Card key={i} className="shadow-sm border-muted/50">
+            <CardHeader className="flex flex-row items-center justify-between pb-2">
+              <CardTitle className="text-sm font-medium text-muted-foreground">
+                {stat.title}
+              </CardTitle>
+              <stat.icon className={`h-4 w-4 ${stat.className || "text-muted-foreground"}`} />
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-bold">{stat.value.toLocaleString()}</div>
+            </CardContent>
+          </Card>
+        ))}
+      </div>
+
+      <div className="space-y-4">
+        <div className="flex items-center justify-between">
+          <h2 className="text-xl font-semibold tracking-tight">Recent Jobs</h2>
+          <Link href="/jobs" className="text-sm text-primary hover:underline font-medium">
+            View all jobs
+          </Link>
+        </div>
+        
+        <Card className="shadow-sm border-muted/50 overflow-hidden">
+          {stats.recentJobs.length === 0 ? (
+            <div className="p-8 text-center text-muted-foreground">
+              No recent jobs. Get started by generating PDFs.
+            </div>
+          ) : (
+            <div className="divide-y">
+              {stats.recentJobs.map((job) => (
+                <div key={job.id} className="p-4 hover:bg-muted/30 transition-colors flex items-center justify-between">
+                  <div className="flex items-start gap-4">
+                    <div className="mt-1">
+                      <JobStatusBadge status={job.status} />
+                    </div>
+                    <div>
+                      <Link href={`/jobs/${job.id}`} className="font-semibold text-foreground hover:text-primary hover:underline transition-colors">
+                        {job.bankName} - {job.auditType}
+                      </Link>
+                      <div className="flex items-center gap-3 text-xs text-muted-foreground mt-1">
+                        <span className="flex items-center gap-1">
+                          <FileText className="h-3 w-3" />
+                          {job.originalFilename}
+                        </span>
+                        <span className="flex items-center gap-1">
+                          <Clock className="h-3 w-3" />
+                          {formatDate(job.createdAt)}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="text-right">
+                    <div className="text-sm font-medium">{job.fileCount} files</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </Card>
+      </div>
+    </div>
+  );
+}

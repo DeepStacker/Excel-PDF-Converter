@@ -1,0 +1,31 @@
+kind = "web"
+previewPath = "/"
+title = "PDF Generator"
+version = "1.0.0"
+id = "artifacts/pdf-generator"
+router = "path"
+
+[[integratedSkills]]
+name = "react-vite"
+version = "1.0.0"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 25103
+
+[services.development]
+run = "pnpm --filter @workspace/pdf-generator run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/pdf-generator", "run", "build" ]
+publicDir = "artifacts/pdf-generator/dist/public"
+serve = "static"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "25103"
+BASE_PATH = "/"
