@@ -47,9 +47,7 @@ export default function Dashboard() {
       {stats.totalJobs === 0 && (
         <div className="bg-primary/5 border border-primary/20 rounded-2xl p-6 md:p-8">
           <div className="mb-6">
-            <h2 className="text-2xl font-bold flex items-center gap-2">
-              <span className="text-primary">👋</span> Welcome to AuditGen
-            </h2>
+            <h2 className="text-2xl font-bold">Welcome to AuditGen</h2>
             <p className="text-muted-foreground mt-1">Follow these three steps to generate your first batch of branch PDFs.</p>
           </div>
           

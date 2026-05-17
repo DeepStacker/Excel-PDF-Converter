@@ -4,8 +4,9 @@ import path from "path";
 import fs from "fs";
 import { spawn } from "child_process";
 import { createRequire } from "module";
+import type { Archiver as ArchiverInstance } from "archiver";
 const _require = createRequire(import.meta.url);
-const archiver = _require("archiver") as (format: string, options?: object) => archiver.Archiver;
+const archiver = _require("archiver") as (format: string, options?: object) => ArchiverInstance;
 import { db } from "@workspace/db";
 import { jobsTable, generatedFilesTable, banksTable } from "@workspace/db";
 import { eq, desc } from "drizzle-orm";
@@ -28,7 +29,8 @@ const storage = multer.diskStorage({
   destination: (_req, _file, cb) => cb(null, UPLOADS_DIR),
   filename: (_req, file, cb) => {
     const unique = `${Date.now()}-${Math.round(Math.random() * 1e9)}`;
-    cb(null, `${unique}-${file.originalname}`);
+    const safeName = file.originalname.replace(/[^a-zA-Z0-9._-]/g, "_");
+    cb(null, `${unique}-${safeName}`);
   },
 });
 
@@ -42,47 +44,92 @@ const upload = multer({
       cb(new Error("Only Excel files (.xlsx, .xls) are allowed"));
     }
   },
-  limits: { fileSize: 50 * 1024 * 1024 },
+  limits: { fileSize: 50 * 1024 * 1024 }, // 50 MB max
 });
 
 const PYTHON_SCRIPT = path.join(process.cwd(), "scripts", "pdf_generator.py");
+const JOB_TIMEOUT_MS = 8 * 60 * 1000; // 8 minutes
+
+// ── Concurrency semaphore: max 2 simultaneous Python processes ──
+const MAX_CONCURRENT = 2;
+let activeProcesses = 0;
+const waitQueue: Array<() => void> = [];
+
+function acquireSlot(): Promise<void> {
+  if (activeProcesses < MAX_CONCURRENT) {
+    activeProcesses++;
+    return Promise.resolve();
+  }
+  return new Promise((resolve) => {
+    waitQueue.push(() => { activeProcesses++; resolve(); });
+  });
+}
+
+function releaseSlot(): void {
+  activeProcesses--;
+  const next = waitQueue.shift();
+  if (next) next();
+}
+
+type PdfResult = {
+  success: boolean;
+  files?: Array<{
+    filename: string;
+    branchCode: string;
+    branchName: string;
+    rowCount: number;
+    fileSize: number;
+  }>;
+  error?: string;
+};
 
 function runPdfGenerator(
   excelPath: string,
   outputDir: string,
   auditType: string,
   config: object
-): Promise<{ success: boolean; files?: Array<{ filename: string; branchCode: string; branchName: string; rowCount: number; fileSize: number }>; error?: string }> {
+): Promise<PdfResult> {
   return new Promise((resolve) => {
     const configJson = JSON.stringify(config);
     const proc = spawn("python3", [PYTHON_SCRIPT, excelPath, outputDir, auditType, configJson]);
     let stdout = "";
     let stderr = "";
-    proc.stdout.on("data", (d) => { stdout += d.toString(); });
-    proc.stderr.on("data", (d) => { stderr += d.toString(); });
+
+    const killTimeout = setTimeout(() => {
+      proc.kill("SIGKILL");
+      resolve({ success: false, error: `PDF generation timed out after ${JOB_TIMEOUT_MS / 60000} minutes` });
+    }, JOB_TIMEOUT_MS);
+
+    proc.stdout.on("data", (d: Buffer) => { stdout += d.toString(); });
+    proc.stderr.on("data", (d: Buffer) => { stderr += d.toString(); });
+
     proc.on("close", (code) => {
-      if (stderr) logger.warn({ stderr }, "PDF generator stderr");
+      clearTimeout(killTimeout);
+      if (stderr) logger.warn({ stderr: stderr.slice(0, 2000) }, "PDF generator stderr");
       if (code !== 0) {
-        resolve({ success: false, error: stderr || "Python process failed" });
+        resolve({ success: false, error: stderr.slice(0, 500) || "Python process failed" });
         return;
       }
       try {
         const result = JSON.parse(stdout.trim());
         resolve(result);
-      } catch (e) {
-        resolve({ success: false, error: `Failed to parse output: ${stdout}` });
+      } catch {
+        resolve({ success: false, error: `Failed to parse output: ${stdout.slice(0, 200)}` });
       }
     });
+
     proc.on("error", (err) => {
+      clearTimeout(killTimeout);
       resolve({ success: false, error: err.message });
     });
   });
 }
 
-async function processJob(jobId: number, excelPath: string, bank: any, auditType: string) {
+async function processJob(jobId: number, excelPath: string, bank: { columnMapping: unknown; pdfStyle: unknown }, auditType: string) {
   const outputDir = path.join(OUTPUTS_DIR, String(jobId));
   fs.mkdirSync(outputDir, { recursive: true });
 
+  await acquireSlot();
   try {
     await db.update(jobsTable).set({ status: "processing", outputDir }).where(eq(jobsTable.id, jobId));
 
@@ -117,17 +164,21 @@ async function processJob(jobId: number, excelPath: string, bank: any, auditType
     await db.update(jobsTable)
       .set({ status: "completed", fileCount: files.length })
       .where(eq(jobsTable.id, jobId));
-  } catch (err: any) {
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : "Unknown error";
     logger.error({ err, jobId }, "Job processing error");
     await db.update(jobsTable)
-      .set({ status: "failed", errorMessage: err?.message ?? "Unknown error" })
+      .set({ status: "failed", errorMessage: msg })
       .where(eq(jobsTable.id, jobId));
+  } finally {
+    releaseSlot();
   }
 }
 
+// ── List jobs ──
 router.get("/", async (req, res): Promise<void> => {
   try {
-    const jobs = await db.select().from(jobsTable).orderBy(desc(jobsTable.createdAt));
+    const jobs = await db.select().from(jobsTable).orderBy(desc(jobsTable.createdAt)).limit(200);
     res.json(jobs);
   } catch (err) {
     req.log.error({ err }, "Failed to list jobs");
@@ -135,7 +186,20 @@ router.get("/", async (req, res): Promise<void> => {
   }
 });
 
-router.post("/", upload.single("file"), async (req, res): Promise<void> => {
+// ── Create job ──
+router.post(
+  "/",
+  (req, res, next) => {
+    upload.single("file")(req, res, (err) => {
+      if (err) {
+        // multer errors (file type, size limit, etc.)
+        res.status(400).json({ error: err.message });
+        return;
+      }
+      next();
+    });
+  },
+  async (req, res): Promise<void> => {
   if (!req.file) {
     res.status(400).json({ error: "No file uploaded" });
     return;
@@ -146,7 +210,7 @@ router.post("/", upload.single("file"), async (req, res): Promise<void> => {
     auditType: req.body.auditType,
   });
   if (!parsed.success) {
-    res.status(400).json({ error: parsed.error.message });
+    res.status(400).json({ error: "Invalid request: bankId and auditType are required" });
     return;
   }
 
@@ -155,7 +219,21 @@ router.post("/", upload.single("file"), async (req, res): Promise<void> => {
   try {
     const [bank] = await db.select().from(banksTable).where(eq(banksTable.id, bankId));
     if (!bank) {
-      res.status(404).json({ error: "Bank not found" });
+      res.status(404).json({ error: "Bank configuration not found" });
+      return;
+    }
+    if (!bank.isActive) {
+      res.status(400).json({ error: "This bank configuration is inactive" });
+      return;
+    }
+
+    // Validate audit type exists in bank config
+    const auditTypes = (bank.auditTypes as Array<{ code: string }>) ?? [];
+    const validAuditType = auditTypes.some((t) => t.code === auditType);
+    if (!validAuditType) {
+      res.status(400).json({
+        error: `Invalid audit type "${auditType}". Valid types: ${auditTypes.map(t => t.code).join(", ")}`,
+      });
       return;
     }
 
@@ -181,6 +259,7 @@ router.post("/", upload.single("file"), async (req, res): Promise<void> => {
   }
 });
 
+// ── Get job detail ──
 router.get("/:id", async (req, res): Promise<void> => {
   const parsed = GetJobParams.safeParse({ id: Number(req.params.id) });
   if (!parsed.success) { res.status(400).json({ error: "Invalid id" }); return; }
@@ -188,7 +267,8 @@ router.get("/:id", async (req, res): Promise<void> => {
     const [job] = await db.select().from(jobsTable).where(eq(jobsTable.id, parsed.data.id));
     if (!job) { res.status(404).json({ error: "Job not found" }); return; }
 
-    const files = await db.select().from(generatedFilesTable).where(eq(generatedFilesTable.jobId, job.id));
+    const files = await db.select().from(generatedFilesTable)
+      .where(eq(generatedFilesTable.jobId, job.id));
 
     const baseUrl = `/api/jobs/${job.id}`;
     const enrichedFiles = files.map((f) => ({
@@ -207,6 +287,7 @@ router.get("/:id", async (req, res): Promise<void> => {
   }
 });
 
+// ── Delete job ──
 router.delete("/:id", async (req, res): Promise<void> => {
   const parsed = DeleteJobParams.safeParse({ id: Number(req.params.id) });
   if (!parsed.success) { res.status(400).json({ error: "Invalid id" }); return; }
@@ -217,13 +298,12 @@ router.delete("/:id", async (req, res): Promise<void> => {
     await db.delete(generatedFilesTable).where(eq(generatedFilesTable.jobId, job.id));
     await db.delete(jobsTable).where(eq(jobsTable.id, job.id));
 
-    // Clean up files
     if (job.uploadedFilePath && fs.existsSync(job.uploadedFilePath)) {
-      fs.unlinkSync(job.uploadedFilePath);
+      try { fs.unlinkSync(job.uploadedFilePath); } catch { /* ignore */ }
     }
     const outputDir = path.join(OUTPUTS_DIR, String(job.id));
     if (fs.existsSync(outputDir)) {
-      fs.rmSync(outputDir, { recursive: true, force: true });
+      try { fs.rmSync(outputDir, { recursive: true, force: true }); } catch { /* ignore */ }
     }
 
     res.status(204).send();
@@ -233,6 +313,7 @@ router.delete("/:id", async (req, res): Promise<void> => {
   }
 });
 
+// ── Retry job ──
 router.post("/:id/retry", async (req, res): Promise<void> => {
   const parsed = RetryJobParams.safeParse({ id: Number(req.params.id) });
   if (!parsed.success) { res.status(400).json({ error: "Invalid id" }); return; }
@@ -240,18 +321,21 @@ router.post("/:id/retry", async (req, res): Promise<void> => {
     const [job] = await db.select().from(jobsTable).where(eq(jobsTable.id, parsed.data.id));
     if (!job) { res.status(404).json({ error: "Job not found" }); return; }
     if (!job.uploadedFilePath || !fs.existsSync(job.uploadedFilePath)) {
-      res.status(400).json({ error: "Original file no longer available" });
+      res.status(400).json({ error: "Original file is no longer available for retry" });
+      return;
+    }
+    if (job.status === "processing") {
+      res.status(400).json({ error: "Job is already processing" });
       return;
     }
 
     const [bank] = await db.select().from(banksTable).where(eq(banksTable.id, job.bankId));
-    if (!bank) { res.status(404).json({ error: "Bank not found" }); return; }
+    if (!bank) { res.status(404).json({ error: "Bank configuration not found" }); return; }
 
-    // Clear old generated files
     await db.delete(generatedFilesTable).where(eq(generatedFilesTable.jobId, job.id));
     const outputDir = path.join(OUTPUTS_DIR, String(job.id));
     if (fs.existsSync(outputDir)) {
-      fs.rmSync(outputDir, { recursive: true, force: true });
+      try { fs.rmSync(outputDir, { recursive: true, force: true }); } catch { /* ignore */ }
     }
 
     const [updatedJob] = await db.update(jobsTable)
@@ -270,16 +354,17 @@ router.post("/:id/retry", async (req, res): Promise<void> => {
   }
 });
 
+// ── Download single file ──
 router.get("/:id/files/:filename", async (req, res): Promise<void> => {
   const jobId = Number(req.params.id);
   const filename = req.params.filename;
   if (isNaN(jobId)) { res.status(400).json({ error: "Invalid id" }); return; }
 
   const outputDir = path.join(OUTPUTS_DIR, String(jobId));
-  const filePath = path.join(outputDir, filename);
+  const filePath = path.resolve(outputDir, filename);
 
-  // Security: ensure the file is inside the expected output dir
-  if (!filePath.startsWith(outputDir)) {
+  // Security: path traversal protection
+  if (!filePath.startsWith(path.resolve(outputDir))) {
     res.status(403).json({ error: "Forbidden" });
     return;
   }
@@ -292,31 +377,37 @@ router.get("/:id/files/:filename", async (req, res): Promise<void> => {
   res.download(filePath, filename);
 });
 
+// ── Download all as ZIP ──
 router.get("/:id/download-all", async (req, res): Promise<void> => {
   const jobId = Number(req.params.id);
   if (isNaN(jobId)) { res.status(400).json({ error: "Invalid id" }); return; }
 
-  const [job] = await db.select().from(jobsTable).where(eq(jobsTable.id, jobId));
-  if (!job) { res.status(404).json({ error: "Job not found" }); return; }
+  try {
+    const [job] = await db.select().from(jobsTable).where(eq(jobsTable.id, jobId));
+    if (!job) { res.status(404).json({ error: "Job not found" }); return; }
 
-  const outputDir = path.join(OUTPUTS_DIR, String(jobId));
-  if (!fs.existsSync(outputDir)) {
-    res.status(404).json({ error: "Output directory not found" });
-    return;
+    const outputDir = path.join(OUTPUTS_DIR, String(jobId));
+    if (!fs.existsSync(outputDir)) {
+      res.status(404).json({ error: "No output files found" });
+      return;
+    }
+
+    const safeName = `${job.bankName}_${job.auditType}_${jobId}`.replace(/[^a-zA-Z0-9_-]/g, "_");
+    res.setHeader("Content-Type", "application/zip");
+    res.setHeader("Content-Disposition", `attachment; filename="${safeName}.zip"`);
+
+    const archive = archiver("zip", { zlib: { level: 6 } });
+    archive.on("error", (err: Error) => {
+      req.log.error({ err }, "Archive error");
+      if (!res.headersSent) res.status(500).end();
+    });
+    archive.pipe(res);
+    archive.directory(outputDir, false);
+    archive.finalize();
+  } catch (err) {
+    req.log.error({ err }, "Failed to download all");
+    if (!res.headersSent) res.status(500).json({ error: "Internal server error" });
   }
-
-  const zipFilename = `${job.bankName}_${job.auditType}_${jobId}.zip`;
-  res.setHeader("Content-Type", "application/zip");
-  res.setHeader("Content-Disposition", `attachment; filename="${zipFilename}"`);
-
-  const archive = archiver("zip", { zlib: { level: 9 } });
-  archive.on("error", (err) => {
-    req.log.error({ err }, "Archive error");
-    res.status(500).end();
-  });
-  archive.pipe(res);
-  archive.directory(outputDir, false);
-  archive.finalize();
 });
 
 export default router;

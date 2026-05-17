@@ -1,36 +1,41 @@
 import { Switch, Route, Router as WouterRouter } from "wouter";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import NotFound from "@/pages/not-found";
 import { Layout } from "@/components/layout";
-
+import { ErrorBoundary } from "@/components/error-boundary";
+import { queryClient } from "@/lib/query-client";
 import Dashboard from "@/pages/dashboard";
-import Generate from "@/pages/generate";
-import JobsList from "@/pages/jobs/index";
+import Generate  from "@/pages/generate";
+import JobsList  from "@/pages/jobs/index";
 import JobDetail from "@/pages/jobs/detail";
 import BanksList from "@/pages/banks/index";
-import BankForm from "@/pages/banks/form";
+import BankForm  from "@/pages/banks/form";
 import SharePage from "@/pages/share";
-
-const queryClient = new QueryClient();
+import NotFound  from "@/pages/not-found";
 
 function Router() {
   return (
     <Switch>
-      <Route path="/share/:token" component={SharePage} />
+      <Route path="/share/:token">
+        <ErrorBoundary>
+          <SharePage />
+        </ErrorBoundary>
+      </Route>
       <Route>
         <Layout>
-          <Switch>
-            <Route path="/" component={Dashboard} />
-            <Route path="/generate" component={Generate} />
-            <Route path="/jobs" component={JobsList} />
-            <Route path="/jobs/:id" component={JobDetail} />
-            <Route path="/banks" component={BanksList} />
-            <Route path="/banks/new" component={BankForm} />
-            <Route path="/banks/:id/edit" component={BankForm} />
-            <Route component={NotFound} />
-          </Switch>
+          <ErrorBoundary>
+            <Switch>
+              <Route path="/" component={Dashboard} />
+              <Route path="/generate" component={Generate} />
+              <Route path="/jobs" component={JobsList} />
+              <Route path="/jobs/:id" component={JobDetail} />
+              <Route path="/banks" component={BanksList} />
+              <Route path="/banks/new" component={BankForm} />
+              <Route path="/banks/:id/edit" component={BankForm} />
+              <Route component={NotFound} />
+            </Switch>
+          </ErrorBoundary>
         </Layout>
       </Route>
     </Switch>

@@ -1,4 +1,4 @@
-import { pgTable, text, serial, timestamp, integer, jsonb } from "drizzle-orm/pg-core";
+import { pgTable, text, serial, timestamp, integer, index } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
 
@@ -15,7 +15,11 @@ export const jobsTable = pgTable("jobs", {
   errorMessage: text("error_message"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow().$onUpdate(() => new Date()),
-});
+}, (table) => [
+  index("jobs_status_idx").on(table.status),
+  index("jobs_bank_id_idx").on(table.bankId),
+  index("jobs_created_at_idx").on(table.createdAt),
+]);
 
 export const generatedFilesTable = pgTable("generated_files", {
   id: serial("id").primaryKey(),
@@ -26,7 +30,9 @@ export const generatedFilesTable = pgTable("generated_files", {
   rowCount: integer("row_count").notNull().default(0),
   fileSize: integer("file_size"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-});
+}, (table) => [
+  index("generated_files_job_id_idx").on(table.jobId),
+]);
 
 export const insertJobSchema = createInsertSchema(jobsTable).omit({
   id: true,

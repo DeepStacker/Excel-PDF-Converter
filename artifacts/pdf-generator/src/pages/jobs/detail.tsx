@@ -222,6 +222,7 @@ export default function JobDetail() {
                   <TableRow>
                     <TableHead>Branch Code</TableHead>
                     <TableHead>Branch Name</TableHead>
+                    <TableHead>Rows</TableHead>
                     <TableHead>Size</TableHead>
                     <TableHead className="text-right">Action</TableHead>
                   </TableRow>
@@ -232,6 +233,9 @@ export default function JobDetail() {
                       <TableCell className="font-mono text-xs">{file.branchCode}</TableCell>
                       <TableCell className="font-medium truncate max-w-[200px]" title={file.branchName}>
                         {file.branchName}
+                      </TableCell>
+                      <TableCell className="text-muted-foreground text-sm">
+                        {file.rowCount ?? 0}
                       </TableCell>
                       <TableCell className="text-muted-foreground text-sm">
                         {formatBytes(file.fileSize)}

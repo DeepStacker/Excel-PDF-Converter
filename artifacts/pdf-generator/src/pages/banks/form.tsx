@@ -102,8 +102,11 @@ export default function BankForm() {
         queryClient.invalidateQueries({ queryKey: getGetStatsQueryKey() });
         setLocation("/banks");
       },
-      onError: (err) => {
-        toast({ title: "Failed to create bank", description: err.message, variant: "destructive" });
+      onError: (err: any) => {
+        const msg = err?.response?.status === 409
+          ? "A bank with this code already exists. Use a different code."
+          : err.message;
+        toast({ title: "Failed to create bank", description: msg, variant: "destructive" });
       }
     }
   });
@@ -249,7 +252,15 @@ export default function BankForm() {
               <FormField control={form.control} name="code" render={({ field }) => (
                 <FormItem>
                   <FormLabel>Code</FormLabel>
-                  <FormControl><Input placeholder="e.g. ACME" className="uppercase" {...field} /></FormControl>
+                  <FormControl>
+                    <Input
+                      placeholder="e.g. ACME"
+                      className="uppercase"
+                      {...field}
+                      onChange={(e) => field.onChange(e.target.value.toUpperCase())}
+                    />
+                  </FormControl>
+                  <FormDescription>Short unique identifier — letters only, no spaces.</FormDescription>
                   <FormMessage />
                 </FormItem>
               )} />
