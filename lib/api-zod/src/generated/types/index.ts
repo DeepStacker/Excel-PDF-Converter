@@ -19,4 +19,7 @@ export * from './jobInput';
 export * from './jobStatus';
 export * from './pdfStyle';
 export * from './pdfStylePageOrientation';
+export * from './sharedJobDetail';
+export * from './shareLink';
+export * from './shareLinkInput';
 export * from './stats';

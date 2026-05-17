@@ -1,16 +1,19 @@
 import { useRoute } from "wouter";
-import { useGetJob, useRetryJob, useDeleteJob, getListJobsQueryKey, getGetStatsQueryKey } from "@workspace/api-client-react";
+import { useGetJob, useRetryJob, useDeleteJob, getListJobsQueryKey, getGetStatsQueryKey, useCreateShareLink, getGetJobQueryKey } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { JobStatusBadge } from "@/components/status-badge";
 import { formatDate, formatBytes } from "@/lib/format";
 import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Download, RefreshCw, Trash2, FileText, AlertTriangle } from "lucide-react";
+import { Download, RefreshCw, Trash2, FileText, AlertTriangle, Share2, Copy } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { useLocation } from "wouter";
 import { useToast } from "@/hooks/use-toast";
 import { Progress } from "@/components/ui/progress";
+import { useState } from "react";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
 
 export default function JobDetail() {
   const [match, params] = useRoute("/jobs/:id");
@@ -18,9 +21,13 @@ export default function JobDetail() {
   const [_, setLocation] = useLocation();
   const { toast } = useToast();
   const queryClient = useQueryClient();
+  
+  const [shareUrl, setShareUrl] = useState<string | null>(null);
+  const [isShareDialogOpen, setIsShareDialogOpen] = useState(false);
 
   const { data: job, isLoading, isError } = useGetJob(id, {
     query: {
+      queryKey: getGetJobQueryKey(id),
       enabled: !!id,
       refetchInterval: (query) => {
         const data = query.state.data;
@@ -55,6 +62,37 @@ export default function JobDetail() {
       }
     }
   });
+
+  const shareMutation = useCreateShareLink({
+    mutation: {
+      onSuccess: (data) => {
+        // Construct full URL using window location
+        const url = new URL(`/share/${data.token}`, window.location.origin).toString();
+        setShareUrl(url);
+        
+        navigator.clipboard.writeText(url)
+          .then(() => {
+            toast({ title: "Share link copied to clipboard" });
+            setIsShareDialogOpen(true);
+          })
+          .catch(() => {
+            toast({ title: "Share link created", description: "Failed to copy automatically." });
+            setIsShareDialogOpen(true);
+          });
+      },
+      onError: (err) => {
+        toast({ title: "Failed to create share link", description: err.message, variant: "destructive" });
+      }
+    }
+  });
+
+  const copyShareUrl = () => {
+    if (shareUrl) {
+      navigator.clipboard.writeText(shareUrl).then(() => {
+        toast({ title: "Share link copied to clipboard" });
+      });
+    }
+  };
 
   if (isLoading) {
     return <div className="space-y-6 animate-pulse">
@@ -140,13 +178,24 @@ export default function JobDetail() {
               <div className="font-medium">{job.fileCount}</div>
             </div>
             
-            {job.downloadAllUrl && (
-              <div className="pt-4 border-t mt-4">
-                <Button className="w-full" asChild>
-                  <a href={job.downloadAllUrl} download>
-                    <Download className="mr-2 h-4 w-4" />
-                    Download All (ZIP)
-                  </a>
+            {(job.downloadAllUrl || job.status === 'completed') && (
+              <div className="pt-4 border-t mt-4 flex flex-col gap-2">
+                {job.downloadAllUrl && (
+                  <Button className="w-full" asChild>
+                    <a href={job.downloadAllUrl} download>
+                      <Download className="mr-2 h-4 w-4" />
+                      Download All (ZIP)
+                    </a>
+                  </Button>
+                )}
+                <Button 
+                  variant="secondary" 
+                  className="w-full" 
+                  onClick={() => shareMutation.mutate({ id, data: { expiresInHours: null } })}
+                  disabled={shareMutation.isPending}
+                >
+                  <Share2 className="mr-2 h-4 w-4" />
+                  Share Files
                 </Button>
               </div>
             )}
@@ -201,6 +250,29 @@ export default function JobDetail() {
           </div>
         </Card>
       </div>
+
+      <Dialog open={isShareDialogOpen} onOpenChange={setIsShareDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Share Link Created</DialogTitle>
+            <DialogDescription>
+              Anyone with this link can view and download the generated PDFs.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex items-center space-x-2 mt-4">
+            <Input 
+              value={shareUrl || ""} 
+              readOnly 
+              className="flex-1"
+              onClick={(e) => (e.target as HTMLInputElement).select()}
+            />
+            <Button onClick={copyShareUrl} size="sm" className="shrink-0">
+              <Copy className="h-4 w-4 mr-2" />
+              Copy
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

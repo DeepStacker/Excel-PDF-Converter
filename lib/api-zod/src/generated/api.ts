@@ -298,6 +298,44 @@ export const RetryJobResponse = zod.object({
 
 
 /**
+ * @summary Create a shareable download link for a job
+ */
+export const CreateShareLinkParams = zod.object({
+  "id": zod.coerce.number()
+})
+
+export const CreateShareLinkBody = zod.object({
+  "expiresInHours": zod.number().nullish().describe('Hours until the link expires. Null means never expires.')
+})
+
+
+/**
+ * @summary Get publicly shared job files (no auth required)
+ */
+export const GetSharedJobParams = zod.object({
+  "token": zod.coerce.string()
+})
+
+export const GetSharedJobResponse = zod.object({
+  "jobId": zod.number(),
+  "bankName": zod.string(),
+  "auditType": zod.string(),
+  "originalFilename": zod.string(),
+  "fileCount": zod.number(),
+  "expiresAt": zod.coerce.date().nullable(),
+  "files": zod.array(zod.object({
+  "filename": zod.string(),
+  "branchCode": zod.string(),
+  "branchName": zod.string(),
+  "rowCount": zod.number(),
+  "downloadUrl": zod.string(),
+  "fileSize": zod.number().nullish()
+})),
+  "downloadAllUrl": zod.string().nullish()
+})
+
+
+/**
  * @summary Get dashboard statistics
  */
 export const GetStatsResponse = zod.object({

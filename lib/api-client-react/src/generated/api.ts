@@ -27,6 +27,9 @@ import type {
   Job,
   JobDetail,
   JobInput,
+  ShareLink,
+  ShareLinkInput,
+  SharedJobDetail,
   Stats
 } from './api.schemas';
 
@@ -854,6 +857,155 @@ export const useRetryJob = <TError = ErrorType<unknown>,
       > => {
       return useMutation(getRetryJobMutationOptions(options));
     }
+
+export const getCreateShareLinkUrl = (id: number,) => {
+
+
+
+
+  return `/api/jobs/${id}/share`
+}
+
+/**
+ * @summary Create a shareable download link for a job
+ */
+export const createShareLink = async (id: number,
+    shareLinkInput: ShareLinkInput, options?: RequestInit): Promise<ShareLink> => {
+
+  return customFetch<ShareLink>(getCreateShareLinkUrl(id),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      shareLinkInput,)
+  }
+);}
+
+
+
+
+export const getCreateShareLinkMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createShareLink>>, TError,{id: number;data: BodyType<ShareLinkInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof createShareLink>>, TError,{id: number;data: BodyType<ShareLinkInput>}, TContext> => {
+
+const mutationKey = ['createShareLink'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof createShareLink>>, {id: number;data: BodyType<ShareLinkInput>}> = (props) => {
+          const {id,data} = props ?? {};
+
+          return  createShareLink(id,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type CreateShareLinkMutationResult = NonNullable<Awaited<ReturnType<typeof createShareLink>>>
+    export type CreateShareLinkMutationBody = BodyType<ShareLinkInput>
+    export type CreateShareLinkMutationError = ErrorType<void>
+
+    /**
+ * @summary Create a shareable download link for a job
+ */
+export const useCreateShareLink = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createShareLink>>, TError,{id: number;data: BodyType<ShareLinkInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof createShareLink>>,
+        TError,
+        {id: number;data: BodyType<ShareLinkInput>},
+        TContext
+      > => {
+      return useMutation(getCreateShareLinkMutationOptions(options));
+    }
+
+export const getGetSharedJobUrl = (token: string,) => {
+
+
+
+
+  return `/api/share/${token}`
+}
+
+/**
+ * @summary Get publicly shared job files (no auth required)
+ */
+export const getSharedJob = async (token: string, options?: RequestInit): Promise<SharedJobDetail> => {
+
+  return customFetch<SharedJobDetail>(getGetSharedJobUrl(token),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetSharedJobQueryKey = (token: string,) => {
+    return [
+    `/api/share/${token}`
+    ] as const;
+    }
+
+
+export const getGetSharedJobQueryOptions = <TData = Awaited<ReturnType<typeof getSharedJob>>, TError = ErrorType<void>>(token: string, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getSharedJob>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetSharedJobQueryKey(token);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getSharedJob>>> = ({ signal }) => getSharedJob(token, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: !!(token), ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getSharedJob>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetSharedJobQueryResult = NonNullable<Awaited<ReturnType<typeof getSharedJob>>>
+export type GetSharedJobQueryError = ErrorType<void>
+
+
+/**
+ * @summary Get publicly shared job files (no auth required)
+ */
+
+export function useGetSharedJob<TData = Awaited<ReturnType<typeof getSharedJob>>, TError = ErrorType<void>>(
+ token: string, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getSharedJob>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetSharedJobQueryOptions(token,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+
+
+
+
+
 
 export const getGetStatsUrl = () => {
 

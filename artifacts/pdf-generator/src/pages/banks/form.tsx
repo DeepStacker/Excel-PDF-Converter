@@ -77,7 +77,7 @@ export default function BankForm() {
   const queryClient = useQueryClient();
 
   const { data: bank, isLoading: isLoadingBank } = useGetBank(id, {
-    query: { enabled: isEdit && !!id }
+    query: { queryKey: getGetBankQueryKey(id), enabled: isEdit && !!id }
   });
 
   const createMutation = useCreateBank({

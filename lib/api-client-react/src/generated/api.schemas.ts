@@ -136,6 +136,37 @@ export interface JobInput {
   auditType: string;
 }
 
+export interface ShareLinkInput {
+  /**
+     * Hours until the link expires. Null means never expires.
+     * @nullable
+     */
+  expiresInHours?: number | null;
+}
+
+export interface ShareLink {
+  id: number;
+  jobId: number;
+  token: string;
+  shareUrl: string;
+  /** @nullable */
+  expiresAt?: string | null;
+  createdAt: string;
+}
+
+export interface SharedJobDetail {
+  jobId: number;
+  bankName: string;
+  auditType: string;
+  originalFilename: string;
+  fileCount: number;
+  /** @nullable */
+  expiresAt: string | null;
+  files: GeneratedFile[];
+  /** @nullable */
+  downloadAllUrl?: string | null;
+}
+
 export interface Stats {
   totalJobs: number;
   completedJobs: number;
