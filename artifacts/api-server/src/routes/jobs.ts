@@ -3,7 +3,6 @@ import multer from "multer";
 import path from "path";
 import fs from "fs";
 import { fileURLToPath } from "url";
-import { spawn } from "child_process";
 import { createRequire } from "module";
 import type { Archiver as ArchiverInstance } from "archiver";
 const _require = createRequire(import.meta.url);
@@ -18,6 +17,7 @@ import {
   RetryJobParams,
 } from "@workspace/api-zod";
 import { logger } from "../lib/logger";
+import { generatePdf } from "../lib/pdfGenerator";
 
 const router = Router();
 
@@ -39,7 +39,6 @@ const upload = multer({
 });
 
 const PKG_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const PYTHON_SCRIPT = path.join(PKG_ROOT, "scripts", "pdf_generator.py");
 const JOB_TIMEOUT_MS = 8 * 60 * 1000; // 8 minutes
 
 // ── Concurrency semaphore: max 2 simultaneous processes ──
@@ -103,54 +102,20 @@ type PdfResult = {
   error?: string;
 };
 
-// ── Startup warmup - spawn a dummy process to preload Python libraries ──
-const warmupProc = spawn("python3", ["-c", "import openpyxl; import pandas; import reportlab; print('warmup')"]);
-warmupProc.on("close", (code) => {
-  if (code === 0) {
-    logger.info("Python warmup completed");
-  }
-});
-
 function runPdfGenerator(
   excelPath: string,
   outputDir: string,
   auditType: string,
   config: object
 ): Promise<PdfResult> {
-  return new Promise((resolve) => {
-    const configJson = JSON.stringify(config);
-    const proc = spawn("python3", [PYTHON_SCRIPT, excelPath, outputDir, auditType, configJson]);
-    let stdout = "";
-    let stderr = "";
-
-    const killTimeout = setTimeout(() => {
-      proc.kill("SIGKILL");
-      resolve({ success: false, error: `PDF generation timed out after ${JOB_TIMEOUT_MS / 60000} minutes` });
-    }, JOB_TIMEOUT_MS);
-
-    proc.stdout.on("data", (d: Buffer) => { stdout += d.toString(); });
-    proc.stderr.on("data", (d: Buffer) => { stderr += d.toString(); });
-
-    proc.on("close", (code) => {
-      clearTimeout(killTimeout);
-      if (stderr) logger.warn({ stderr: stderr.slice(0, 2000) }, "PDF generator stderr");
-      if (code !== 0) {
-        resolve({ success: false, error: stderr.slice(0, 500) || "Python process failed" });
-        return;
-      }
-      try {
-        const result = JSON.parse(stdout.trim());
-        resolve(result);
-      } catch {
-        resolve({ success: false, error: `Failed to parse output: ${stdout.slice(0, 200)}` });
-      }
-    });
-
-    proc.on("error", (err) => {
-      clearTimeout(killTimeout);
-      resolve({ success: false, error: err.message });
-    });
+  const timeoutPromise = new Promise<PdfResult>((_, reject) => {
+    setTimeout(() => reject(new Error(`PDF generation timed out after ${JOB_TIMEOUT_MS / 60000} minutes`)), JOB_TIMEOUT_MS);
   });
+
+  return Promise.race([
+    generatePdf(excelPath, outputDir, auditType, config as { columnMapping: unknown; pdfStyle: unknown }),
+    timeoutPromise
+  ]).catch((err) => ({ success: false, error: err.message }));
 }
 
 async function processJob(jobId: number, excelBuffer: Buffer, bank: { columnMapping: unknown; pdfStyle: unknown }, auditType: string) {
