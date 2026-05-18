@@ -74,34 +74,6 @@ type PdfResult = {
   error?: string;
 };
 
-function acquireSlot(): Promise<void> {
-  if (activeProcesses < MAX_CONCURRENT) {
-    activeProcesses++;
-    return Promise.resolve();
-  }
-  return new Promise((resolve) => {
-    waitQueue.push(() => { activeProcesses++; resolve(); });
-  });
-}
-
-function releaseSlot(): void {
-  activeProcesses--;
-  const next = waitQueue.shift();
-  if (next) next();
-}
-
-type PdfResult = {
-  success: boolean;
-  files?: Array<{
-    filename: string;
-    branchCode: string;
-    branchName: string;
-    rowCount: number;
-    fileSize: number;
-  }>;
-  error?: string;
-};
-
 function runPdfGenerator(
   excelPath: string,
   outputDir: string,
