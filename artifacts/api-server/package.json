@@ -4,7 +4,10 @@
   "private": true,
   "type": "module",
   "pnpm": {
-    "onlyBuiltDependencies": ["esbuild", "puppeteer"]
+    "onlyBuiltDependencies": [
+      "esbuild",
+      "puppeteer"
+    ]
   },
   "scripts": {
     "dev": "export NODE_ENV=development && pnpm run build && pnpm run start",
@@ -21,6 +24,7 @@
     "drizzle-orm": "catalog:",
     "express": "^5.2.1",
     "express-rate-limit": "^8.5.1",
+    "jszip": "^3.10.1",
     "multer": "^2.1.1",
     "pino": "^9.14.0",
     "pino-http": "^10.5.0",

@@ -12,17 +12,29 @@ import {
 const router = Router();
 
 function getShareUrl(req: Request, token: string): string {
-  const host = ((req.headers["x-forwarded-host"] ?? req.headers.host ?? "localhost") as string)
+  const proto = ((req.headers["x-forwarded-proto"] ?? "http") as string)
     .split(",")[0].trim();
-  const proto = ((req.headers["x-forwarded-proto"] ?? "https") as string)
-    .split(",")[0].trim();
+  const forwardedHost = req.headers["x-forwarded-host"] as string | undefined;
+  let host: string;
+  
+  if (forwardedHost) {
+    host = forwardedHost.split(",")[0].trim();
+  } else {
+    const reqHost = req.headers.host || "localhost";
+    const port = parseInt(reqHost.split(":")[1] || "8080", 10);
+    if (port === 8080) {
+      host = reqHost.replace(":8080", ":3000");
+    } else {
+      host = reqHost;
+    }
+  }
   return `${proto}://${host}/share/${token}`;
 }
 
 function getApiBaseUrl(req: Request): string {
-  const host = ((req.headers["x-forwarded-host"] ?? req.headers.host ?? "localhost") as string)
+  const proto = ((req.headers["x-forwarded-proto"] ?? "http") as string)
     .split(",")[0].trim();
-  const proto = ((req.headers["x-forwarded-proto"] ?? "https") as string)
+  const host = ((req.headers["x-forwarded-host"] ?? req.headers.host ?? "localhost") as string)
     .split(",")[0].trim();
   return `${proto}://${host}/api`;
 }
@@ -99,7 +111,7 @@ router.get("/share/:token", async (req, res): Promise<void> => {
       .from(generatedFilesTable)
       .where(eq(generatedFilesTable.jobId, job.id));
 
-    const baseUrl = `${getApiBaseUrl(req)}/jobs/${job.id}`;
+    const baseUrl = `/api/jobs/${job.id}`;
     const enrichedFiles = files.map((f) => ({
       ...f,
       fileData: undefined,

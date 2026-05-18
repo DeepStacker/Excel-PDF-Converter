@@ -3,10 +3,7 @@ import multer from "multer";
 import path from "path";
 import fs from "fs";
 import { fileURLToPath } from "url";
-import { createRequire } from "module";
-import type { Archiver as ArchiverInstance } from "archiver";
-const _require = createRequire(import.meta.url);
-const archiver = _require("archiver") as (format: string, options?: object) => ArchiverInstance;
+import JSZip from "jszip";
 import { db } from "@workspace/db";
 import { jobsTable, generatedFilesTable, banksTable } from "@workspace/db";
 import { eq, desc, and } from "drizzle-orm";
@@ -387,27 +384,23 @@ router.get("/:id/download-all", async (req, res): Promise<void> => {
       return;
     }
 
-    const safeName = `${job.bankName}_${job.auditType}_${jobId}`.replace(/[^a-zA-Z0-9_-]/g, "_");
-    res.setHeader("Content-Type", "application/zip");
-    res.setHeader("Content-Disposition", `attachment; filename="${safeName}.zip"`);
-
-    const archive = archiver("zip", { zlib: { level: 6 } });
-    archive.on("error", (err: Error) => {
-      req.log.error({ err }, "Archive error");
-      if (!res.headersSent) res.status(500).end();
-    });
-    archive.pipe(res);
-
+    const zip = new JSZip();
     for (const file of files) {
       if (file.fileData) {
-        archive.append(Buffer.from(file.fileData, "base64"), { name: file.filename });
+        zip.file(file.filename, Buffer.from(file.fileData, "base64"));
       }
     }
 
-    archive.finalize();
+    const zipBuffer = await zip.generateAsync({ type: "nodebuffer", compression: "DEFLATE", compressionOptions: { level: 6 } });
+
+    const safeName = `${job.bankName}_${job.auditType}_${jobId}`.replace(/[^a-zA-Z0-9_-]/g, "_");
+    res.setHeader("Content-Type", "application/zip");
+    res.setHeader("Content-Disposition", `attachment; filename="${safeName}.zip"`);
+    res.setHeader("Content-Length", zipBuffer.length);
+    res.send(zipBuffer);
   } catch (err) {
     req.log.error({ err }, "Failed to download all");
-    if (!res.headersSent) res.status(500).json({ error: "Internal server error" });
+    res.status(500).json({ error: "Internal server error" });
   }
 });
 
