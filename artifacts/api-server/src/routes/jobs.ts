@@ -235,9 +235,11 @@ function runPdfGenerator(
 async function processJob(jobId: number, excelBuffer: Buffer, bank: { columnMapping: unknown; pdfStyle: unknown }, auditType: string) {
   const tempInput = path.join(TEMP_DIR, `input_${jobId}.xlsx`);
   const outputDir = path.join(TEMP_DIR, `output_${jobId}`);
+  const startTime = Date.now();
 
   await acquireSlot();
   try {
+    logger.info({ jobId }, "Starting job processing");
     await db.update(jobsTable).set({ status: "processing" }).where(eq(jobsTable.id, jobId));
 
     fs.writeFileSync(tempInput, excelBuffer);
@@ -248,9 +250,11 @@ async function processJob(jobId: number, excelBuffer: Buffer, bank: { columnMapp
       pdfStyle: bank.pdfStyle ?? {},
     };
 
+    logger.debug({ jobId, auditType }, "Launching PDF generation");
     const result = await runPdfGenerator(tempInput, outputDir, auditType, config);
 
     if (!result.success) {
+      logger.error({ jobId, error: result.error }, "PDF generation failed");
       await db.update(jobsTable)
         .set({ status: "failed", errorMessage: result.error ?? "Unknown error" })
         .where(eq(jobsTable.id, jobId));
@@ -259,6 +263,7 @@ async function processJob(jobId: number, excelBuffer: Buffer, bank: { columnMapp
 
     const files = result.files ?? [];
     if (files.length > 0) {
+      logger.info({ jobId, fileCount: files.length }, "Saving generated files to database");
       const fileRecords = await Promise.all(
         files.map(async (f) => {
           const filePath = path.join(outputDir, f.filename);
@@ -277,8 +282,9 @@ async function processJob(jobId: number, excelBuffer: Buffer, bank: { columnMapp
       await db.insert(generatedFilesTable).values(fileRecords);
     }
 
-    // Mark job complete AND null out the uploaded Excel data to reclaim space.
-    // The uploaded file is no longer needed after successful PDF generation.
+    const durationMs = Date.now() - startTime;
+    logger.info({ jobId, fileCount: files.length, durationMs }, "Job completed successfully");
+
     await db.update(jobsTable)
       .set({ status: "completed", fileCount: files.length, uploadedFileData: null })
       .where(eq(jobsTable.id, jobId));
