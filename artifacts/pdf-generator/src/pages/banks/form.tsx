@@ -44,6 +44,7 @@ const formSchema = z.object({
     headerColor2: z.string().regex(/^#[0-9A-Fa-f]{6}$/, "Must be a valid hex color"),
     fontSize: z.coerce.number().min(6).max(24),
     rowHeight: z.coerce.number().min(10).max(100),
+    headerRowHeight: z.coerce.number().min(10).max(100),
   }),
   auditTypes: z.array(z.object({
     code: z.string().min(1, "Required"),
@@ -77,6 +78,7 @@ const defaultValues: FormValues = {
     headerColor2: "#4985E8",
     fontSize: 10,
     rowHeight: 20,
+    headerRowHeight: 22.5,
   },
   auditTypes: [{ code: "POA", label: "Physical Verification" }],
 };
@@ -167,6 +169,7 @@ export default function BankForm() {
           headerColor2: bank.pdfStyle?.headerColor2 || "#4985E8",
           fontSize: bank.pdfStyle?.fontSize || 10,
           rowHeight: bank.pdfStyle?.rowHeight || 20,
+          headerRowHeight: bank.pdfStyle?.headerRowHeight || 22.5,
         },
         auditTypes: bank.auditTypes || [],
       });
@@ -522,6 +525,13 @@ export default function BankForm() {
                   <FormField control={form.control} name="pdfStyle.rowHeight" render={({ field }) => (
                     <FormItem>
                       <FormLabel>Row Height (pt)</FormLabel>
+                      <FormControl><Input type="number" {...field} /></FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )} />
+                  <FormField control={form.control} name="pdfStyle.headerRowHeight" render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Header Row Height (pt)</FormLabel>
                       <FormControl><Input type="number" {...field} /></FormControl>
                       <FormMessage />
                     </FormItem>

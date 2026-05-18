@@ -25,6 +25,7 @@ config_json must contain:
 import os
 import sys
 import json
+import re
 import argparse
 import openpyxl
 import pandas as pd
@@ -339,6 +340,8 @@ def process_excel(excel_path, output_dir, audit_type, col_map, pdf_style):
 
     _headers, all_rows = read_excel(excel_path, col_map)
 
+    MAX_BRANCHES = 10_000
+
     groups = {}
     for row in all_rows:
         branch = str(row.get(col_map["branchGroupBy"], "UNKNOWN")).strip()
@@ -346,12 +349,23 @@ def process_excel(excel_path, output_dir, audit_type, col_map, pdf_style):
             branch = "UNKNOWN"
         groups.setdefault(branch, []).append(row)
 
+    if len(groups) > MAX_BRANCHES:
+        raise Exception(
+            f"Too many branches ({len(groups)}). Maximum allowed is {MAX_BRANCHES}."
+        )
+
+    def _safe_filename(s: str, maxlen: int = 100) -> str:
+        """Strip all characters that are unsafe in filenames, collapse whitespace."""
+        s = re.sub(r"[^\w\s\-.]", "_", s)
+        s = re.sub(r"[\s_]+", "_", s).strip("_")
+        return s[:maxlen] or "UNKNOWN"
+
     results = []
     for branch_code, branch_rows in sorted(groups.items()):
         try:
             branch_name = str(branch_rows[0].get(col_map["branchNameCol"], "")).strip()
             state = str(branch_rows[0].get(col_map["stateCol"], "")).strip()
-            safe_name = branch_name.replace("/", "_").replace("\\", "_") or branch_code.replace("/", "_").replace("\\", "_")
+            safe_name = _safe_filename(branch_name) or _safe_filename(branch_code)
             output_file = os.path.join(output_dir, f"{safe_name}_{audit_type}.pdf")
 
             generate_pdf(

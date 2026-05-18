@@ -220,6 +220,12 @@ router.post(
 
   const { bankId, auditType } = parsed.data;
 
+  // Sanitize auditType: must be alphanumeric + underscores only (defense in depth)
+  if (!/^[A-Za-z0-9_-]{1,20}$/.test(auditType)) {
+    res.status(400).json({ error: "Invalid audit type format" });
+    return;
+  }
+
   try {
     const [bank] = await db.select().from(banksTable).where(eq(banksTable.id, bankId));
     if (!bank) {
@@ -365,10 +371,12 @@ router.get("/:id/files/:filename", async (req, res): Promise<void> => {
   if (isNaN(jobId)) { res.status(400).json({ error: "Invalid id" }); return; }
 
   const outputDir = path.join(OUTPUTS_DIR, String(jobId));
+  const resolvedDir = path.resolve(outputDir);
   const filePath = path.resolve(outputDir, filename);
 
-  // Security: path traversal protection
-  if (!filePath.startsWith(path.resolve(outputDir))) {
+  // Security: path traversal protection via path.relative (safer than startsWith)
+  const relative = path.relative(resolvedDir, filePath);
+  if (relative.startsWith("..") || path.isAbsolute(relative)) {
     res.status(403).json({ error: "Forbidden" });
     return;
   }

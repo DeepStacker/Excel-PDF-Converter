@@ -84,7 +84,7 @@ export default function Generate() {
 
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.message || "Failed to submit job");
+        throw new Error(errorData.error || errorData.message || "Failed to submit job");
       }
 
       const job = await response.json();
