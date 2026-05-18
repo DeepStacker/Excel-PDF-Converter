@@ -39,99 +39,13 @@ const upload = multer({
 });
 
 const PKG_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const PYTHON_WORKER = path.join(PKG_ROOT, "scripts", "pdf_worker.py");
+const PYTHON_SCRIPT = path.join(PKG_ROOT, "scripts", "pdf_generator.py");
 const JOB_TIMEOUT_MS = 8 * 60 * 1000; // 8 minutes
 
-// ── Concurrency semaphore: max 2 simultaneous Python processes ──
+// ── Concurrency semaphore: max 2 simultaneous processes ──
 const MAX_CONCURRENT = 2;
 let activeProcesses = 0;
 const waitQueue: Array<() => void> = [];
-
-// ── Persistent Python worker pool ──
-let workerProcess: ReturnType<typeof spawn> | null = null;
-let workerReady = false;
-let workerInitPromise: Promise<void> | null = null;
-let pendingJobs: Map<number, {
-  resolve: (value: PdfResult) => void;
-  reject: (reason: Error) => void;
-  timeout: NodeJS.Timeout;
-}> = new Map();
-let jobIdCounter = 0;
-
-function startWorker(): Promise<void> {
-  return new Promise((resolve, reject) => {
-    if (workerProcess) {
-      resolve();
-      return;
-    }
-
-    workerProcess = spawn("python3", [PYTHON_WORKER], {
-      stdio: ["pipe", "pipe", "pipe"]
-    });
-
-    let stderrBuffer = "";
-
-    workerProcess.stdout?.on("data", (data: Buffer) => {
-      const text = data.toString();
-      const lines = text.split("\n");
-      
-      for (const line of lines) {
-        if (!line.trim()) continue;
-        try {
-          const result = JSON.parse(line);
-
-          for (const [jobId, pending] of pendingJobs) {
-            if (result.files || result.error) {
-              clearTimeout(pending.timeout);
-              pending.resolve(result);
-              pendingJobs.delete(jobId);
-              break;
-            }
-          }
-        } catch {}
-      }
-    });
-
-    workerProcess.stderr?.on("data", (data: Buffer) => {
-      stderrBuffer += data.toString();
-      if (stderrBuffer.includes("started") && !workerReady) {
-        workerReady = true;
-        resolve();
-      }
-    });
-
-    workerProcess.on("error", (err) => {
-      workerReady = false;
-      workerProcess = null;
-      workerInitPromise = null;
-      reject(err);
-    });
-
-    workerProcess.on("exit", (code) => {
-      workerReady = false;
-      workerProcess = null;
-      workerInitPromise = null;
-      for (const [, pending] of pendingJobs) {
-        clearTimeout(pending.timeout);
-        pending.reject(new Error("Worker process exited"));
-      }
-      pendingJobs.clear();
-    });
-
-    setTimeout(() => {
-      if (!workerReady) {
-        reject(new Error("Worker initialization timeout"));
-      }
-    }, 60000);
-  });
-}
-
-function getWorker(): Promise<void> {
-  if (!workerInitPromise) {
-    workerInitPromise = startWorker();
-  }
-  return workerInitPromise;
-}
 
 function acquireSlot(): Promise<void> {
   if (activeProcesses < MAX_CONCURRENT) {
@@ -161,35 +75,81 @@ type PdfResult = {
   error?: string;
 };
 
+function acquireSlot(): Promise<void> {
+  if (activeProcesses < MAX_CONCURRENT) {
+    activeProcesses++;
+    return Promise.resolve();
+  }
+  return new Promise((resolve) => {
+    waitQueue.push(() => { activeProcesses++; resolve(); });
+  });
+}
+
+function releaseSlot(): void {
+  activeProcesses--;
+  const next = waitQueue.shift();
+  if (next) next();
+}
+
+type PdfResult = {
+  success: boolean;
+  files?: Array<{
+    filename: string;
+    branchCode: string;
+    branchName: string;
+    rowCount: number;
+    fileSize: number;
+  }>;
+  error?: string;
+};
+
+// ── Startup warmup - spawn a dummy process to preload Python libraries ──
+const warmupProc = spawn("python3", ["-c", "import openpyxl; import pandas; import reportlab; print('warmup')"]);
+warmupProc.on("close", (code) => {
+  if (code === 0) {
+    logger.info("Python warmup completed");
+  }
+});
+
 function runPdfGenerator(
   excelPath: string,
   outputDir: string,
   auditType: string,
   config: object
 ): Promise<PdfResult> {
-  return new Promise(async (resolve, reject) => {
-    try {
-      await getWorker();
+  return new Promise((resolve) => {
+    const configJson = JSON.stringify(config);
+    const proc = spawn("python3", [PYTHON_SCRIPT, excelPath, outputDir, auditType, configJson]);
+    let stdout = "";
+    let stderr = "";
 
-      const jobId = ++jobIdCounter;
-      const jobPayload = JSON.stringify({
-        excelPath,
-        outputDir,
-        auditType,
-        config
-      }) + "\n";
+    const killTimeout = setTimeout(() => {
+      proc.kill("SIGKILL");
+      resolve({ success: false, error: `PDF generation timed out after ${JOB_TIMEOUT_MS / 60000} minutes` });
+    }, JOB_TIMEOUT_MS);
 
-      const timeout = setTimeout(() => {
-        pendingJobs.delete(jobId);
-        resolve({ success: false, error: `PDF generation timed out after ${JOB_TIMEOUT_MS / 60000} minutes` });
-      }, JOB_TIMEOUT_MS);
+    proc.stdout.on("data", (d: Buffer) => { stdout += d.toString(); });
+    proc.stderr.on("data", (d: Buffer) => { stderr += d.toString(); });
 
-      pendingJobs.set(jobId, { resolve, reject, timeout });
+    proc.on("close", (code) => {
+      clearTimeout(killTimeout);
+      if (stderr) logger.warn({ stderr: stderr.slice(0, 2000) }, "PDF generator stderr");
+      if (code !== 0) {
+        resolve({ success: false, error: stderr.slice(0, 500) || "Python process failed" });
+        return;
+      }
+      try {
+        const result = JSON.parse(stdout.trim());
+        resolve(result);
+      } catch {
+        resolve({ success: false, error: `Failed to parse output: ${stdout.slice(0, 200)}` });
+      }
+    });
 
-      workerProcess?.stdin?.write(jobPayload);
-    } catch (err) {
-      resolve({ success: false, error: err instanceof Error ? err.message : "Worker failed" });
-    }
+    proc.on("error", (err) => {
+      clearTimeout(killTimeout);
+      resolve({ success: false, error: err.message });
+    });
   });
 }
 
