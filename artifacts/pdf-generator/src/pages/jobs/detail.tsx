@@ -1,4 +1,4 @@
-import { useRoute } from "wouter";
+import { Link, useRoute } from "wouter";
 import { useGetJob, useRetryJob, useDeleteJob, getListJobsQueryKey, getGetStatsQueryKey, useCreateShareLink, getGetJobQueryKey } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -6,7 +6,7 @@ import { JobStatusBadge } from "@/components/status-badge";
 import { formatDate, formatBytes } from "@/lib/format";
 import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Download, RefreshCw, Trash2, FileText, AlertTriangle, Share2, Copy, Eye, Search, ArrowUp, ArrowDown } from "lucide-react";
+import { Download, RefreshCw, Trash2, FileText, AlertTriangle, Share2, Copy, Eye, Search, ArrowUp, ArrowDown, ChevronLeft } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { useLocation } from "wouter";
 import { useToast } from "@/hooks/use-toast";
@@ -40,6 +40,7 @@ export default function JobDetail() {
   const [isShareDialogOpen, setIsShareDialogOpen] = useState(false);
   const [shareExpiry, setShareExpiry] = useState<string>("never");
   const [downloadingZip, setDownloadingZip] = useState(false);
+  const [downloadProgress, setDownloadProgress] = useState(0);
   const [fileSearch, setFileSearch] = useState("");
   const [sortField, setSortField] = useState<"branchName" | "fileSize" | "rowCount">("branchName");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
@@ -55,11 +56,44 @@ export default function JobDetail() {
     }
   });
 
-  const downloadBlob = async (url: string, filename: string) => {
+  const totalFileSize = job?.files?.reduce((acc, f) => acc + (f.fileSize || 0), 0) || 0;
+
+  const downloadBlob = async (url: string, filename: string, onProgress?: (p: number) => void) => {
     try {
       const res = await fetch(url);
       if (!res.ok) throw new Error(`Server error: ${res.status}`);
-      const blob = await res.blob();
+
+      const contentLength = res.headers.get('content-length');
+      const total = contentLength ? parseInt(contentLength, 10) : 0;
+
+      if (!res.body || total === 0) {
+        const blob = await res.blob();
+        const blobUrl = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = blobUrl;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(blobUrl);
+        return;
+      }
+
+      const reader = res.body.getReader();
+      const chunks: Uint8Array[] = [];
+      let received = 0;
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        chunks.push(value);
+        received += value.length;
+        if (onProgress && total > 0) {
+          onProgress(Math.round((received / total) * 100));
+        }
+      }
+
+      const blob = new Blob(chunks);
       const blobUrl = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = blobUrl;
@@ -76,9 +110,12 @@ export default function JobDetail() {
   const handleDownloadZip = async () => {
     if (!job?.downloadAllUrl) return;
     setDownloadingZip(true);
+    setDownloadProgress(0);
     const zipName = `${job.bankName}_${job.auditType}_${job.id}.zip`.replace(/[^a-zA-Z0-9_.-]/g, "_");
-    await downloadBlob(job.downloadAllUrl, zipName);
+    await downloadBlob(job.downloadAllUrl, zipName, setDownloadProgress);
     setDownloadingZip(false);
+    setDownloadProgress(0);
+    toast({ title: "Download complete", description: `${job.fileCount} files downloaded` });
   };
 
   const handleDownloadPdf = (downloadUrl: string, filename: string) => {
@@ -174,22 +211,18 @@ export default function JobDetail() {
     </div>;
   }
 
-  if (isError || !job) {
+if (isError || !job) {
     return <div className="text-destructive">Failed to load job details.</div>;
   }
 
   const isWorking = job.status === 'pending' || job.status === 'processing';
 
-  const processedCount = (job as any).processedFiles ?? 0;
-  const totalCount = job.fileCount ?? 0;
-  const currentFile = (job as any).currentFile ?? '';
-
-  const progress = totalCount > 0
-    ? Math.round((processedCount / totalCount) * 100)
-    : (job.status === 'completed' ? 100 : 0);
-
   return (
     <div className="space-y-6">
+      <Link href="/jobs" className="inline-flex items-center text-sm text-muted-foreground hover:text-foreground mb-3">
+        <ChevronLeft className="h-4 w-4 mr-1" />
+        Back to Jobs
+      </Link>
       <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4">
         <div>
           <div className="flex items-center gap-3">
@@ -301,14 +334,19 @@ export default function JobDetail() {
             {(job.downloadAllUrl || job.status === 'completed') && (
               <div className="pt-4 border-t mt-4 flex flex-col gap-2">
                 {job.downloadAllUrl && (
-                  <Button className="w-full" onClick={handleDownloadZip} disabled={downloadingZip}>
-                    <Download className="mr-2 h-4 w-4" />
-                    {downloadingZip ? "Preparing ZIP..." : "Download All (ZIP)"}
-                  </Button>
+                  <div className="space-y-2">
+                    <Button className="w-full" onClick={handleDownloadZip} disabled={downloadingZip}>
+                      <Download className="mr-2 h-4 w-4" />
+                      {downloadingZip ? `Downloading... ${downloadProgress}%` : "Download All (ZIP)"}
+                    </Button>
+                    {downloadingZip && (
+                      <Progress value={downloadProgress} className="h-1.5" />
+                    )}
+                  </div>
                 )}
-                <Button 
-                  variant="secondary" 
-                  className="w-full" 
+                <Button
+                  variant="secondary"
+                  className="w-full"
                   onClick={openShareDialog}
                 >
                   <Share2 className="mr-2 h-4 w-4" />
