@@ -1,6 +1,9 @@
-import { pgTable, text, serial, timestamp, integer, index, blob } from "drizzle-orm/pg-core";
+import { pgTable, text, serial, timestamp, integer, index, pgColumn } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
+
+const bytea = () => pgColumn({ dataType: "bytea" });
 
 export const jobsTable = pgTable("jobs", {
   id: serial("id").primaryKey(),
@@ -9,7 +12,7 @@ export const jobsTable = pgTable("jobs", {
   auditType: text("audit_type").notNull(),
   status: text("status").notNull().default("pending"),
   originalFilename: text("original_filename").notNull(),
-  uploadedFileData: blob("uploaded_file_data", { mode: "buffer" }),
+  uploadedFileData: bytea(),
   fileCount: integer("file_count").notNull().default(0),
   errorMessage: text("error_message"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
@@ -28,7 +31,7 @@ export const generatedFilesTable = pgTable("generated_files", {
   branchName: text("branch_name").notNull(),
   rowCount: integer("row_count").notNull().default(0),
   fileSize: integer("file_size"),
-  fileData: blob("file_data", { mode: "buffer" }),
+  fileData: bytea(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 }, (table) => [
   index("generated_files_job_id_idx").on(table.jobId),
