@@ -32,18 +32,53 @@ import {
 export default function JobDetail() {
   const [match, params] = useRoute("/jobs/:id");
   const id = params?.id ? parseInt(params.id, 10) : 0;
-  const [_, setLocation] = useLocation();
+  const [location, setLocation] = useLocation();
   const { toast } = useToast();
   const queryClient = useQueryClient();
-  
+
+  const getUrlParams = () => {
+    const params = new URLSearchParams(location.split("?")[1] || "");
+    return {
+      search: params.get("search") || "",
+      sort: (params.get("sort") as "branchName" | "fileSize" | "rowCount") || "branchName",
+      dir: (params.get("dir") as "asc" | "desc") || "asc",
+    };
+  };
+
+  const urlParams = getUrlParams();
   const [shareUrl, setShareUrl] = useState<string | null>(null);
   const [isShareDialogOpen, setIsShareDialogOpen] = useState(false);
   const [shareExpiry, setShareExpiry] = useState<string>("never");
   const [downloadingZip, setDownloadingZip] = useState(false);
   const [downloadProgress, setDownloadProgress] = useState(0);
-  const [fileSearch, setFileSearch] = useState("");
-  const [sortField, setSortField] = useState<"branchName" | "fileSize" | "rowCount">("branchName");
-  const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
+  const [fileSearch, setFileSearch] = useState(urlParams.search);
+  const [sortField, setSortField] = useState<"branchName" | "fileSize" | "rowCount">(urlParams.sort);
+  const [sortDir, setSortDir] = useState<"asc" | "desc">(urlParams.dir);
+
+  const updateUrlParams = (search: string, sort: string, dir: string) => {
+    const params = new URLSearchParams();
+    if (search) params.set("search", search);
+    if (sort && sort !== "branchName") params.set("sort", sort);
+    if (dir && dir !== "asc") params.set("dir", dir);
+    const queryString = params.toString();
+    setLocation(`${location.split("?")[0]}${queryString ? `?${queryString}` : ""}`, { replace: true });
+  };
+
+  const handleSearchChange = (value: string) => {
+    setFileSearch(value);
+    updateUrlParams(value, sortField, sortDir);
+  };
+
+  const handleSortChange = (value: "branchName" | "fileSize" | "rowCount") => {
+    setSortField(value);
+    updateUrlParams(fileSearch, value, sortDir);
+  };
+
+  const handleSortDirToggle = () => {
+    const newDir = sortDir === "asc" ? "desc" : "asc";
+    setSortDir(newDir);
+    updateUrlParams(fileSearch, sortField, newDir);
+  };
 
   const { data: job, isLoading, isError } = useGetJob(id, {
     query: {
@@ -170,11 +205,13 @@ export default function JobDetail() {
     shareMutation.mutate({ id, data: { expiresInHours } });
   };
 
-  const copyShareUrl = () => {
-    if (shareUrl) {
-      navigator.clipboard.writeText(shareUrl).then(() => {
-        toast({ title: "Share link copied to clipboard" });
-      });
+  const copyShareUrl = async () => {
+    if (!shareUrl) return;
+    try {
+      await navigator.clipboard.writeText(shareUrl);
+      toast({ title: "Share link copied to clipboard" });
+    } catch {
+      toast({ title: "Failed to copy", description: "Please copy the link manually", variant: "destructive" });
     }
   };
 
@@ -374,11 +411,11 @@ if (isError || !job) {
                 <Input
                   placeholder="Search branches..."
                   value={fileSearch}
-                  onChange={(e) => setFileSearch(e.target.value)}
+                  onChange={(e) => handleSearchChange(e.target.value)}
                   className="pl-10"
                 />
               </div>
-              <Select value={sortField} onValueChange={(v: any) => setSortField(v)}>
+              <Select value={sortField} onValueChange={handleSortChange}>
                 <SelectTrigger className="w-full sm:w-[140px]">
                   <SelectValue placeholder="Sort by" />
                 </SelectTrigger>
@@ -391,8 +428,8 @@ if (isError || !job) {
               <Button
                 variant="outline"
                 size="sm"
-                onClick={() => setSortDir(d => d === "asc" ? "desc" : "asc")}
-                title={sortDir === "asc" ? "Ascending" : "Descending"}
+                onClick={handleSortDirToggle}
+                aria-label={sortDir === "asc" ? "Sorted ascending, click to sort descending" : "Sorted descending, click to sort ascending"}
               >
                 {sortDir === "asc" ? <ArrowUp className="h-4 w-4" /> : <ArrowDown className="h-4 w-4" />}
               </Button>

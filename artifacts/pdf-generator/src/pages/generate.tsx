@@ -253,24 +253,33 @@ export default function Generate() {
                 </div>
 
                 <div className="space-y-2">
-                  <Label>Data File (Excel)</Label>
-                  <div 
-                    className={`border-2 border-dashed rounded-xl p-10 text-center cursor-pointer transition-colors ${
-                      isDragging ? 'border-primary bg-primary/5' : 
-                      file ? 'border-muted-foreground/30 bg-muted/10' : 
+                  <Label htmlFor="file-upload">Data File (Excel)</Label>
+                  <label
+                    id="file-upload"
+                    htmlFor="excel-file-input"
+                    className={`border-2 border-dashed rounded-xl p-10 text-center cursor-pointer transition-colors block ${
+                      isDragging ? 'border-primary bg-primary/5' :
+                      file ? 'border-muted-foreground/30 bg-muted/10' :
                       'border-muted hover:border-primary/50 hover:bg-muted/20'
                     }`}
                     onDragOver={handleDragOver}
                     onDragLeave={handleDragLeave}
                     onDrop={handleDrop}
-                    onClick={() => fileInputRef.current?.click()}
+                    tabIndex={0}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        fileInputRef.current?.click();
+                      }
+                    }}
                   >
-                    <input 
-                      type="file" 
-                      ref={fileInputRef} 
-                      onChange={handleFileChange} 
-                      accept=".xlsx,.xls" 
-                      className="hidden" 
+                    <input
+                      type="file"
+                      id="excel-file-input"
+                      ref={fileInputRef}
+                      onChange={handleFileChange}
+                      accept=".xlsx,.xls"
+                      className="hidden"
                     />
                     
                     {file ? (
@@ -293,7 +302,7 @@ export default function Generate() {
                         <p className="text-xs text-muted-foreground mt-1">or click to browse from your computer</p>
                       </div>
                     )}
-                  </div>
+                  </label>
                   
                   {selectedBank && requiredExcelCols.length > 0 && !file && (
                     <div className="mt-4 p-4 rounded-lg bg-blue-50 dark:bg-blue-900/20 border border-blue-100 dark:border-blue-900/50">
