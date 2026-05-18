@@ -21,25 +21,12 @@ import { logger } from "../lib/logger";
 
 const router = Router();
 
-// Anchor paths to the source file location so they work regardless of cwd
-// Compiled output lives at dist/index.mjs → one level up is the package root
-const PKG_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const UPLOADS_DIR = path.join(PKG_ROOT, "uploads");
-const OUTPUTS_DIR = path.join(PKG_ROOT, "outputs");
-fs.mkdirSync(UPLOADS_DIR, { recursive: true });
-fs.mkdirSync(OUTPUTS_DIR, { recursive: true });
-
-const storage = multer.diskStorage({
-  destination: (_req, _file, cb) => cb(null, UPLOADS_DIR),
-  filename: (_req, file, cb) => {
-    const unique = `${Date.now()}-${Math.round(Math.random() * 1e9)}`;
-    const safeName = file.originalname.replace(/[^a-zA-Z0-9._-]/g, "_");
-    cb(null, `${unique}-${safeName}`);
-  },
-});
+// Temp directory for processing (files are read from DB, written to temp, cleaned up)
+const TEMP_DIR = path.join(process.env.TMPDIR || "/tmp", "pdf-generator");
+fs.mkdirSync(TEMP_DIR, { recursive: true });
 
 const upload = multer({
-  storage,
+  storage: multer.memoryStorage(),
   fileFilter: (_req, file, cb) => {
     const ext = path.extname(file.originalname).toLowerCase();
     if ([".xlsx", ".xls"].includes(ext)) {
@@ -51,13 +38,95 @@ const upload = multer({
   limits: { fileSize: 50 * 1024 * 1024 }, // 50 MB max
 });
 
-const PYTHON_SCRIPT = path.join(PKG_ROOT, "scripts", "pdf_generator.py");
+const PKG_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const PYTHON_WORKER = path.join(PKG_ROOT, "scripts", "pdf_worker.py");
 const JOB_TIMEOUT_MS = 8 * 60 * 1000; // 8 minutes
 
 // ── Concurrency semaphore: max 2 simultaneous Python processes ──
 const MAX_CONCURRENT = 2;
 let activeProcesses = 0;
 const waitQueue: Array<() => void> = [];
+
+// ── Persistent Python worker pool ──
+let workerProcess: ReturnType<typeof spawn> | null = null;
+let workerReady = false;
+let pendingJobs: Map<number, {
+  resolve: (value: PdfResult) => void;
+  reject: (reason: Error) => void;
+  timeout: NodeJS.Timeout;
+}> = new Map();
+let jobIdCounter = 0;
+
+function getWorker(): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (workerProcess && workerReady) {
+      resolve();
+      return;
+    }
+
+    if (workerProcess) {
+      workerProcess.kill();
+      workerProcess = null;
+    }
+
+    workerProcess = spawn("python3", [PYTHON_WORKER], {
+      stdio: ["pipe", "pipe", "pipe"]
+    });
+
+    let buffer = "";
+
+    workerProcess.stdout?.on("data", (data: Buffer) => {
+      buffer += data.toString();
+      const lines = buffer.split("\n");
+      buffer = lines.pop() ?? "";
+
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        try {
+          const result = JSON.parse(line);
+
+          for (const [jobId, pending] of pendingJobs) {
+            if (result.files || result.error) {
+              clearTimeout(pending.timeout);
+              pending.resolve(result);
+              pendingJobs.delete(jobId);
+              break;
+            }
+          }
+        } catch {}
+      }
+    });
+
+    workerProcess.stderr?.on("data", (data: Buffer) => {
+      const msg = data.toString();
+      if (msg.includes("started")) {
+        workerReady = true;
+        resolve();
+      }
+    });
+
+    workerProcess.on("error", (err) => {
+      workerReady = false;
+      reject(err);
+    });
+
+    workerProcess.on("exit", (code) => {
+      workerReady = false;
+      workerProcess = null;
+      for (const [, pending] of pendingJobs) {
+        clearTimeout(pending.timeout);
+        pending.reject(new Error("Worker process exited"));
+      }
+      pendingJobs.clear();
+    });
+
+    setTimeout(() => {
+      if (!workerReady) {
+        reject(new Error("Worker initialization timeout"));
+      }
+    }, 30000);
+  });
+}
 
 function acquireSlot(): Promise<void> {
   if (activeProcesses < MAX_CONCURRENT) {
@@ -93,56 +162,49 @@ function runPdfGenerator(
   auditType: string,
   config: object
 ): Promise<PdfResult> {
-  return new Promise((resolve) => {
-    const configJson = JSON.stringify(config);
-    const proc = spawn("python3", [PYTHON_SCRIPT, excelPath, outputDir, auditType, configJson]);
-    let stdout = "";
-    let stderr = "";
+  return new Promise(async (resolve, reject) => {
+    try {
+      await getWorker();
 
-    const killTimeout = setTimeout(() => {
-      proc.kill("SIGKILL");
-      resolve({ success: false, error: `PDF generation timed out after ${JOB_TIMEOUT_MS / 60000} minutes` });
-    }, JOB_TIMEOUT_MS);
+      const jobId = ++jobIdCounter;
+      const jobPayload = JSON.stringify({
+        excelPath,
+        outputDir,
+        auditType,
+        config
+      }) + "\n";
 
-    proc.stdout.on("data", (d: Buffer) => { stdout += d.toString(); });
-    proc.stderr.on("data", (d: Buffer) => { stderr += d.toString(); });
+      const timeout = setTimeout(() => {
+        pendingJobs.delete(jobId);
+        resolve({ success: false, error: `PDF generation timed out after ${JOB_TIMEOUT_MS / 60000} minutes` });
+      }, JOB_TIMEOUT_MS);
 
-    proc.on("close", (code) => {
-      clearTimeout(killTimeout);
-      if (stderr) logger.warn({ stderr: stderr.slice(0, 2000) }, "PDF generator stderr");
-      if (code !== 0) {
-        resolve({ success: false, error: stderr.slice(0, 500) || "Python process failed" });
-        return;
-      }
-      try {
-        const result = JSON.parse(stdout.trim());
-        resolve(result);
-      } catch {
-        resolve({ success: false, error: `Failed to parse output: ${stdout.slice(0, 200)}` });
-      }
-    });
+      pendingJobs.set(jobId, { resolve, reject, timeout });
 
-    proc.on("error", (err) => {
-      clearTimeout(killTimeout);
-      resolve({ success: false, error: err.message });
-    });
+      workerProcess?.stdin?.write(jobPayload);
+    } catch (err) {
+      resolve({ success: false, error: err instanceof Error ? err.message : "Worker failed" });
+    }
   });
 }
 
-async function processJob(jobId: number, excelPath: string, bank: { columnMapping: unknown; pdfStyle: unknown }, auditType: string) {
-  const outputDir = path.join(OUTPUTS_DIR, String(jobId));
-  fs.mkdirSync(outputDir, { recursive: true });
+async function processJob(jobId: number, excelBuffer: Buffer, bank: { columnMapping: unknown; pdfStyle: unknown }, auditType: string) {
+  const tempInput = path.join(TEMP_DIR, `input_${jobId}.xlsx`);
+  const outputDir = path.join(TEMP_DIR, `output_${jobId}`);
 
   await acquireSlot();
   try {
-    await db.update(jobsTable).set({ status: "processing", outputDir }).where(eq(jobsTable.id, jobId));
+    await db.update(jobsTable).set({ status: "processing" }).where(eq(jobsTable.id, jobId));
+
+    fs.writeFileSync(tempInput, excelBuffer);
+    fs.mkdirSync(outputDir, { recursive: true });
 
     const config = {
       columnMapping: bank.columnMapping,
       pdfStyle: bank.pdfStyle ?? {},
     };
 
-    const result = await runPdfGenerator(excelPath, outputDir, auditType, config);
+    const result = await runPdfGenerator(tempInput, outputDir, auditType, config);
 
     if (!result.success) {
       await db.update(jobsTable)
@@ -153,16 +215,22 @@ async function processJob(jobId: number, excelPath: string, bank: { columnMappin
 
     const files = result.files ?? [];
     if (files.length > 0) {
-      await db.insert(generatedFilesTable).values(
-        files.map((f) => ({
-          jobId,
-          filename: f.filename,
-          branchCode: f.branchCode,
-          branchName: f.branchName,
-          rowCount: f.rowCount,
-          fileSize: f.fileSize ?? null,
-        }))
+      const fileRecords = await Promise.all(
+        files.map(async (f) => {
+          const filePath = path.join(outputDir, f.filename);
+          const fileData = fs.readFileSync(filePath);
+          return {
+            jobId,
+            filename: f.filename,
+            branchCode: f.branchCode,
+            branchName: f.branchName,
+            rowCount: f.rowCount,
+            fileSize: f.fileSize ?? fileData.length,
+            fileData,
+          };
+        })
       );
+      await db.insert(generatedFilesTable).values(fileRecords);
     }
 
     await db.update(jobsTable)
@@ -176,6 +244,11 @@ async function processJob(jobId: number, excelPath: string, bank: { columnMappin
       .where(eq(jobsTable.id, jobId));
   } finally {
     releaseSlot();
+    // Clean up temp files
+    try {
+      if (fs.existsSync(tempInput)) fs.unlinkSync(tempInput);
+      if (fs.existsSync(outputDir)) fs.rmSync(outputDir, { recursive: true });
+    } catch { /* ignore cleanup errors */ }
   }
 }
 
@@ -253,14 +326,14 @@ router.post(
       auditType,
       status: "pending",
       originalFilename: req.file.originalname,
-      uploadedFilePath: req.file.path,
+      uploadedFileData: req.file.buffer,
       fileCount: 0,
     }).returning();
 
     res.status(201).json(job);
 
-    // Process in background (non-blocking)
-    processJob(job.id, req.file.path, bank, auditType).catch((err) => {
+    // Process in background (non-blocking) - pass buffer instead of path
+    processJob(job.id, req.file.buffer, bank, auditType).catch((err) => {
       logger.error({ err, jobId: job.id }, "Unhandled job processing error");
     });
   } catch (err) {
@@ -283,11 +356,13 @@ router.get("/:id", async (req, res): Promise<void> => {
     const baseUrl = `/api/jobs/${job.id}`;
     const enrichedFiles = files.map((f) => ({
       ...f,
+      fileData: undefined,
       downloadUrl: `${baseUrl}/files/${encodeURIComponent(f.filename)}`,
     }));
 
     res.json({
       ...job,
+      uploadedFileData: undefined,
       files: enrichedFiles,
       downloadAllUrl: files.length > 0 ? `${baseUrl}/download-all` : null,
     });
@@ -308,14 +383,6 @@ router.delete("/:id", async (req, res): Promise<void> => {
     await db.delete(generatedFilesTable).where(eq(generatedFilesTable.jobId, job.id));
     await db.delete(jobsTable).where(eq(jobsTable.id, job.id));
 
-    if (job.uploadedFilePath && fs.existsSync(job.uploadedFilePath)) {
-      try { fs.unlinkSync(job.uploadedFilePath); } catch { /* ignore */ }
-    }
-    const outputDir = path.join(OUTPUTS_DIR, String(job.id));
-    if (fs.existsSync(outputDir)) {
-      try { fs.rmSync(outputDir, { recursive: true, force: true }); } catch { /* ignore */ }
-    }
-
     res.status(204).send();
   } catch (err) {
     req.log.error({ err }, "Failed to delete job");
@@ -330,7 +397,7 @@ router.post("/:id/retry", async (req, res): Promise<void> => {
   try {
     const [job] = await db.select().from(jobsTable).where(eq(jobsTable.id, parsed.data.id));
     if (!job) { res.status(404).json({ error: "Job not found" }); return; }
-    if (!job.uploadedFilePath || !fs.existsSync(job.uploadedFilePath)) {
+    if (!job.uploadedFileData) {
       res.status(400).json({ error: "Original file is no longer available for retry" });
       return;
     }
@@ -343,10 +410,6 @@ router.post("/:id/retry", async (req, res): Promise<void> => {
     if (!bank) { res.status(404).json({ error: "Bank configuration not found" }); return; }
 
     await db.delete(generatedFilesTable).where(eq(generatedFilesTable.jobId, job.id));
-    const outputDir = path.join(OUTPUTS_DIR, String(job.id));
-    if (fs.existsSync(outputDir)) {
-      try { fs.rmSync(outputDir, { recursive: true, force: true }); } catch { /* ignore */ }
-    }
 
     const [updatedJob] = await db.update(jobsTable)
       .set({ status: "pending", errorMessage: null, fileCount: 0 })
@@ -355,7 +418,12 @@ router.post("/:id/retry", async (req, res): Promise<void> => {
 
     res.json(updatedJob);
 
-    processJob(job.id, job.uploadedFilePath, bank, job.auditType).catch((err) => {
+    if (!job.uploadedFileData) {
+      logger.error({ jobId: job.id }, "No uploaded file data found for retry");
+      return;
+    }
+
+    processJob(job.id, Buffer.from(job.uploadedFileData), bank, job.auditType).catch((err) => {
       logger.error({ err, jobId: job.id }, "Unhandled retry error");
     });
   } catch (err) {
@@ -370,23 +438,29 @@ router.get("/:id/files/:filename", async (req, res): Promise<void> => {
   const filename = req.params.filename;
   if (isNaN(jobId)) { res.status(400).json({ error: "Invalid id" }); return; }
 
-  const outputDir = path.join(OUTPUTS_DIR, String(jobId));
-  const resolvedDir = path.resolve(outputDir);
-  const filePath = path.resolve(outputDir, filename);
+  try {
+    const [file] = await db
+      .select()
+      .from(generatedFilesTable)
+      .where(eq(generatedFilesTable.jobId, jobId));
 
-  // Security: path traversal protection via path.relative (safer than startsWith)
-  const relative = path.relative(resolvedDir, filePath);
-  if (relative.startsWith("..") || path.isAbsolute(relative)) {
-    res.status(403).json({ error: "Forbidden" });
-    return;
+    if (!file || file.filename !== filename) {
+      res.status(404).json({ error: "File not found" });
+      return;
+    }
+
+    if (!file.fileData) {
+      res.status(404).json({ error: "File data not found" });
+      return;
+    }
+
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+    res.send(Buffer.from(file.fileData));
+  } catch (err) {
+    req.log.error({ err }, "Failed to download file");
+    res.status(500).json({ error: "Internal server error" });
   }
-
-  if (!fs.existsSync(filePath)) {
-    res.status(404).json({ error: "File not found" });
-    return;
-  }
-
-  res.download(filePath, filename);
 });
 
 // ── Download all as ZIP ──
@@ -398,8 +472,8 @@ router.get("/:id/download-all", async (req, res): Promise<void> => {
     const [job] = await db.select().from(jobsTable).where(eq(jobsTable.id, jobId));
     if (!job) { res.status(404).json({ error: "Job not found" }); return; }
 
-    const outputDir = path.join(OUTPUTS_DIR, String(jobId));
-    if (!fs.existsSync(outputDir)) {
+    const files = await db.select().from(generatedFilesTable).where(eq(generatedFilesTable.jobId, jobId));
+    if (files.length === 0) {
       res.status(404).json({ error: "No output files found" });
       return;
     }
@@ -414,7 +488,13 @@ router.get("/:id/download-all", async (req, res): Promise<void> => {
       if (!res.headersSent) res.status(500).end();
     });
     archive.pipe(res);
-    archive.directory(outputDir, false);
+
+    for (const file of files) {
+      if (file.fileData) {
+        archive.append(Buffer.from(file.fileData), { name: file.filename });
+      }
+    }
+
     archive.finalize();
   } catch (err) {
     req.log.error({ err }, "Failed to download all");

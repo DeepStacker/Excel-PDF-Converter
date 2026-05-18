@@ -19,6 +19,14 @@ function getShareUrl(req: Request, token: string): string {
   return `${proto}://${host}/share/${token}`;
 }
 
+function getApiBaseUrl(req: Request): string {
+  const host = ((req.headers["x-forwarded-host"] ?? req.headers.host ?? "localhost") as string)
+    .split(",")[0].trim();
+  const proto = ((req.headers["x-forwarded-proto"] ?? "https") as string)
+    .split(",")[0].trim();
+  return `${proto}://${host}/api`;
+}
+
 router.post("/jobs/:id/share", async (req, res): Promise<void> => {
   const paramsParsed = CreateShareLinkParams.safeParse({ id: Number(req.params.id) });
   if (!paramsParsed.success) { res.status(400).json({ error: "Invalid id" }); return; }
@@ -91,9 +99,10 @@ router.get("/share/:token", async (req, res): Promise<void> => {
       .from(generatedFilesTable)
       .where(eq(generatedFilesTable.jobId, job.id));
 
-    const baseUrl = `/api/jobs/${job.id}`;
+    const baseUrl = `${getApiBaseUrl(req)}/jobs/${job.id}`;
     const enrichedFiles = files.map((f) => ({
       ...f,
+      fileData: undefined,
       downloadUrl: `${baseUrl}/files/${encodeURIComponent(f.filename)}`,
     }));
 
