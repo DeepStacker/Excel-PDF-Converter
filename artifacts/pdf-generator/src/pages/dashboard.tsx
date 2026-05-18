@@ -1,13 +1,25 @@
-import { useGetStats } from "@workspace/api-client-react";
+import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { FileText, Building2, CheckCircle2, XCircle, Clock, UploadCloud, DownloadCloud, Landmark } from "lucide-react";
 import { JobStatusBadge } from "@/components/status-badge";
 import { formatDate } from "@/lib/format";
 import { Link } from "wouter";
 import { Button } from "@/components/ui/button";
+import type { Stats } from "@workspace/api-client-react";
+
+async function fetchStats(signal?: AbortSignal): Promise<Stats> {
+  const res = await fetch("/api/stats", { signal });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+}
 
 export default function Dashboard() {
-  const { data: stats, isLoading, isError } = useGetStats();
+  const { data: stats, isLoading, isError } = useQuery({
+    queryKey: ["/api/stats"],
+    queryFn: ({ signal }) => fetchStats(signal),
+    staleTime: 30_000,
+    retry: 1,
+  });
 
   if (isLoading) {
     return <div className="space-y-6 animate-pulse">
