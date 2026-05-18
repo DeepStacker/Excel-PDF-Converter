@@ -135,7 +135,6 @@ overrides:
   "rollup>@rollup/rollup-darwin-x64": "-"
   "rollup>@rollup/rollup-freebsd-arm64": "-"
   "rollup>@rollup/rollup-freebsd-x64": "-"
-  "rollup>@rollup/rollup-freebsd-x64": "-"
   "rollup>@rollup/rollup-linux-arm-gnueabihf": "-"
   "rollup>@rollup/rollup-linux-arm-musleabihf": "-"
   "rollup>@rollup/rollup-linux-arm64-gnu": "-"
