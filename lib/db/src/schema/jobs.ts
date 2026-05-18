@@ -1,9 +1,12 @@
-import { pgTable, text, serial, timestamp, integer, index } from "drizzle-orm/pg-core";
-import { sql } from "drizzle-orm";
+import { pgTable, text, serial, timestamp, integer, index, customType } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
 
-const bytea = sql`bytea`;
+const bytea = customType<{ data: Buffer; notNull: false; default: false }>({
+  sqlType: () => "bytea",
+  fromDriver: (value: unknown) => Buffer.isBuffer(value) ? value : Buffer.from(value as string),
+  toDriver: (value: Buffer) => value,
+});
 
 export const jobsTable = pgTable("jobs", {
   id: serial("id").primaryKey(),
