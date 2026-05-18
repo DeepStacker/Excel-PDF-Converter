@@ -1,15 +1,19 @@
+import { useState } from "react";
 import { useRoute } from "wouter";
 import { useGetSharedJob, getGetSharedJobQueryKey } from "@workspace/api-client-react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { formatBytes, formatDate } from "@/lib/format";
 import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Download, FileText, AlertTriangle } from "lucide-react";
+import { Download, Eye, FileText, AlertTriangle } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { useToast } from "@/hooks/use-toast";
 
 export default function SharePage() {
   const [match, params] = useRoute("/share/:token");
   const token = params?.token || "";
+  const { toast } = useToast();
+  const [downloadingZip, setDownloadingZip] = useState(false);
 
   const { data: job, isLoading, isError } = useGetSharedJob(token, {
     query: {
@@ -18,6 +22,36 @@ export default function SharePage() {
       retry: false
     }
   });
+
+  const downloadBlob = async (url: string, filename: string) => {
+    try {
+      const res = await fetch(url);
+      if (!res.ok) throw new Error(`Server error: ${res.status}`);
+      const blob = await res.blob();
+      const blobUrl = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = blobUrl;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(blobUrl);
+    } catch (err) {
+      toast({ title: "Download failed", description: (err as Error).message, variant: "destructive" });
+    }
+  };
+
+  const handleDownloadZip = async () => {
+    if (!job?.downloadAllUrl) return;
+    setDownloadingZip(true);
+    const zipName = `${job.bankName}_${job.auditType}.zip`.replace(/[^a-zA-Z0-9_.-]/g, "_");
+    await downloadBlob(job.downloadAllUrl, zipName);
+    setDownloadingZip(false);
+  };
+
+  const handleDownloadPdf = (downloadUrl: string, filename: string) => {
+    downloadBlob(`${downloadUrl}?download=1`, filename);
+  };
 
   if (isLoading) {
     return (
@@ -61,11 +95,9 @@ export default function SharePage() {
           </div>
           
           {job.downloadAllUrl && (
-            <Button asChild>
-              <a href={job.downloadAllUrl} download>
-                <Download className="mr-2 h-4 w-4" />
-                Download All (ZIP)
-              </a>
+            <Button onClick={handleDownloadZip} disabled={downloadingZip}>
+              <Download className="mr-2 h-4 w-4" />
+              {downloadingZip ? "Preparing ZIP..." : "Download All (ZIP)"}
             </Button>
           )}
         </div>
@@ -106,7 +138,7 @@ export default function SharePage() {
                       <TableHead>Branch Code</TableHead>
                       <TableHead>Branch Name</TableHead>
                       <TableHead>Size</TableHead>
-                      <TableHead className="text-right">Action</TableHead>
+                      <TableHead className="text-right">Actions</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -120,12 +152,23 @@ export default function SharePage() {
                           {formatBytes(file.fileSize)}
                         </TableCell>
                         <TableCell className="text-right">
-                          <Button variant="ghost" size="sm" asChild>
-                            <a href={file.downloadUrl} target="_blank" rel="noreferrer">
+                          <div className="flex items-center justify-end gap-1">
+                            <Button variant="ghost" size="sm" asChild title="View PDF">
+                              <a href={file.downloadUrl} target="_blank" rel="noreferrer">
+                                <Eye className="h-4 w-4" />
+                                <span className="sr-only">View</span>
+                              </a>
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              title="Download PDF"
+                              onClick={() => handleDownloadPdf(file.downloadUrl, file.filename)}
+                            >
                               <Download className="h-4 w-4" />
                               <span className="sr-only">Download</span>
-                            </a>
-                          </Button>
+                            </Button>
+                          </div>
                         </TableCell>
                       </TableRow>
                     ))}
