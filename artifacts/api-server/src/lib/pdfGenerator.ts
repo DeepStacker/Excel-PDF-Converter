@@ -28,6 +28,14 @@ export interface PdfConfig {
   };
 }
 
+export interface PdfProgress {
+  processed: number;
+  total: number;
+  currentFile: string;
+}
+
+type ProgressCallback = (progress: PdfProgress) => void;
+
 interface GeneratedFile {
   filename: string;
   branchCode: string;
@@ -332,7 +340,8 @@ export async function generatePdf(
   excelPath: string,
   outputDir: string,
   auditType: string,
-  config: PdfConfig
+  config: PdfConfig,
+  onProgress?: ProgressCallback
 ): Promise<PdfResult> {
   const { columnMapping } = config;
   const branchGroupBy = columnMapping.branchGroupBy || "Branch Code";
@@ -428,6 +437,14 @@ export async function generatePdf(
           rowCount: group.rows.length,
           fileSize,
         });
+
+        if (onProgress) {
+          onProgress({
+            processed: generatedFiles.length,
+            total: Object.keys(groups).length,
+            currentFile: filename,
+          });
+        }
       }
 
       if (page) {

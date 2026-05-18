@@ -11,6 +11,8 @@ export const jobsTable = pgTable("jobs", {
   originalFilename: text("original_filename").notNull(),
   uploadedFileData: text("uploaded_file_data"), // base64 encoded
   fileCount: integer("file_count").notNull().default(0),
+  processedFiles: integer("processed_files").notNull().default(0),
+  currentFile: text("current_file"),
   errorMessage: text("error_message"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow().$onUpdate(() => new Date()),

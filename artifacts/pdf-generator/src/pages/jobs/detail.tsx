@@ -144,10 +144,14 @@ export default function JobDetail() {
   }
 
   const isWorking = job.status === 'pending' || job.status === 'processing';
-  
-  let progress = 0;
-  if (job.status === 'completed') progress = 100;
-  else if (job.status === 'processing') progress = 50;
+
+  const processedCount = (job as any).processedFiles ?? 0;
+  const totalCount = job.fileCount ?? 0;
+  const currentFile = (job as any).currentFile ?? '';
+
+  const progress = totalCount > 0
+    ? Math.round((processedCount / totalCount) * 100)
+    : (job.status === 'completed' ? 100 : 0);
   
   return (
     <div className="space-y-6">
@@ -198,12 +202,22 @@ export default function JobDetail() {
       {isWorking && (
         <Card className="border-primary/20 bg-primary/5">
           <CardContent className="pt-6">
-            <div className="space-y-4">
+            <div className="space-y-3">
               <div className="flex justify-between text-sm font-medium">
-                <span>{job.status === 'pending' ? 'Queued for processing...' : 'Generating PDFs...'}</span>
-                {job.status === 'processing' && <span className="animate-pulse">Processing</span>}
+                <span>
+                  {job.status === 'pending'
+                    ? 'Queued for processing...'
+                    : `Processing ${processedCount} of ${totalCount} files...`
+                  }
+                </span>
+                <span className="font-mono text-primary">{progress}%</span>
               </div>
-              <Progress value={progress} className="h-2" />
+              <Progress value={progress} className="h-3" />
+              {currentFile && job.status === 'processing' && (
+                <div className="text-xs text-muted-foreground truncate">
+                  Current: <span className="font-medium">{currentFile}</span>
+                </div>
+              )}
             </div>
           </CardContent>
         </Card>

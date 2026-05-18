@@ -220,14 +220,15 @@ function runPdfGenerator(
   excelPath: string,
   outputDir: string,
   auditType: string,
-  config: object
+  config: object,
+  onProgress?: (progress: { processed: number; total: number; currentFile: string }) => void
 ): Promise<PdfResult> {
   const timeoutPromise = new Promise<PdfResult>((_, reject) => {
     setTimeout(() => reject(new Error(`PDF generation timed out after ${JOB_TIMEOUT_MS / 60000} minutes`)), JOB_TIMEOUT_MS);
   });
 
   return Promise.race([
-    generatePdf(excelPath, outputDir, auditType, config as unknown as PdfConfig),
+    generatePdf(excelPath, outputDir, auditType, config as unknown as PdfConfig, onProgress),
     timeoutPromise
   ]).catch((err) => ({ success: false, error: err.message }));
 }
@@ -236,11 +237,12 @@ async function processJob(jobId: number, excelBuffer: Buffer, bank: { columnMapp
   const tempInput = path.join(TEMP_DIR, `input_${jobId}.xlsx`);
   const outputDir = path.join(TEMP_DIR, `output_${jobId}`);
   const startTime = Date.now();
+  let totalFiles = 0;
 
   await acquireSlot();
   try {
     logger.info({ jobId }, "Starting job processing");
-    await db.update(jobsTable).set({ status: "processing" }).where(eq(jobsTable.id, jobId));
+    await db.update(jobsTable).set({ status: "processing", processedFiles: 0 }).where(eq(jobsTable.id, jobId));
 
     fs.writeFileSync(tempInput, excelBuffer);
     fs.mkdirSync(outputDir, { recursive: true });
@@ -250,8 +252,15 @@ async function processJob(jobId: number, excelBuffer: Buffer, bank: { columnMapp
       pdfStyle: bank.pdfStyle ?? {},
     };
 
+    const updateProgress = async (progress: { processed: number; total: number; currentFile: string }) => {
+      totalFiles = progress.total;
+      await db.update(jobsTable)
+        .set({ processedFiles: progress.processed, currentFile: progress.currentFile })
+        .where(eq(jobsTable.id, jobId));
+    };
+
     logger.debug({ jobId, auditType }, "Launching PDF generation");
-    const result = await runPdfGenerator(tempInput, outputDir, auditType, config);
+    const result = await runPdfGenerator(tempInput, outputDir, auditType, config, updateProgress);
 
     if (!result.success) {
       logger.error({ jobId, error: result.error }, "PDF generation failed");
@@ -441,6 +450,7 @@ router.post(
       originalFilename: req.file.originalname,
       uploadedFileData: req.file.buffer.toString("base64"),
       fileCount: 0,
+      processedFiles: 0,
     }).returning();
 
     res.status(201).json(job);
