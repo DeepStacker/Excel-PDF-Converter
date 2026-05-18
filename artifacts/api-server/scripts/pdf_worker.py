@@ -189,10 +189,17 @@ def generate_pdf(excel_path, output_dir, audit_type, config):
     return {"success": True, "files": generated_files, "totalRows": total_rows}
 
 def main():
+    import os
+    import sys
+    
+    # Unbuffered output
+    sys.stdout = os.fdopen(sys.stdout.fileno(), 'w', buffering=1)
+    sys.stderr = os.fdopen(sys.stderr.fileno(), 'w', buffering=1)
+    
     signal.signal(signal.SIGINT, lambda s, f: sys.exit(0))
     signal.signal(signal.SIGTERM, lambda s, f: sys.exit(0))
 
-    sys.stderr.write("PDF Worker started, waiting for jobs...\n")
+    sys.stderr.write("started\n")
     sys.stderr.flush()
 
     while True:

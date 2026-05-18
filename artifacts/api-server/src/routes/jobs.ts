@@ -50,6 +50,7 @@ const waitQueue: Array<() => void> = [];
 // ── Persistent Python worker pool ──
 let workerProcess: ReturnType<typeof spawn> | null = null;
 let workerReady = false;
+let workerInitPromise: Promise<void> | null = null;
 let pendingJobs: Map<number, {
   resolve: (value: PdfResult) => void;
   reject: (reason: Error) => void;
@@ -57,29 +58,23 @@ let pendingJobs: Map<number, {
 }> = new Map();
 let jobIdCounter = 0;
 
-function getWorker(): Promise<void> {
+function startWorker(): Promise<void> {
   return new Promise((resolve, reject) => {
-    if (workerProcess && workerReady) {
+    if (workerProcess) {
       resolve();
       return;
-    }
-
-    if (workerProcess) {
-      workerProcess.kill();
-      workerProcess = null;
     }
 
     workerProcess = spawn("python3", [PYTHON_WORKER], {
       stdio: ["pipe", "pipe", "pipe"]
     });
 
-    let buffer = "";
+    let stderrBuffer = "";
 
     workerProcess.stdout?.on("data", (data: Buffer) => {
-      buffer += data.toString();
-      const lines = buffer.split("\n");
-      buffer = lines.pop() ?? "";
-
+      const text = data.toString();
+      const lines = text.split("\n");
+      
       for (const line of lines) {
         if (!line.trim()) continue;
         try {
@@ -98,8 +93,8 @@ function getWorker(): Promise<void> {
     });
 
     workerProcess.stderr?.on("data", (data: Buffer) => {
-      const msg = data.toString();
-      if (msg.includes("started")) {
+      stderrBuffer += data.toString();
+      if (stderrBuffer.includes("started") && !workerReady) {
         workerReady = true;
         resolve();
       }
@@ -107,12 +102,15 @@ function getWorker(): Promise<void> {
 
     workerProcess.on("error", (err) => {
       workerReady = false;
+      workerProcess = null;
+      workerInitPromise = null;
       reject(err);
     });
 
     workerProcess.on("exit", (code) => {
       workerReady = false;
       workerProcess = null;
+      workerInitPromise = null;
       for (const [, pending] of pendingJobs) {
         clearTimeout(pending.timeout);
         pending.reject(new Error("Worker process exited"));
@@ -124,8 +122,15 @@ function getWorker(): Promise<void> {
       if (!workerReady) {
         reject(new Error("Worker initialization timeout"));
       }
-    }, 30000);
+    }, 60000);
   });
+}
+
+function getWorker(): Promise<void> {
+  if (!workerInitPromise) {
+    workerInitPromise = startWorker();
+  }
+  return workerInitPromise;
 }
 
 function acquireSlot(): Promise<void> {
