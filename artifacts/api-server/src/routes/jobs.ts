@@ -226,7 +226,7 @@ async function processJob(jobId: number, excelBuffer: Buffer, bank: { columnMapp
             branchName: f.branchName,
             rowCount: f.rowCount,
             fileSize: f.fileSize ?? fileData.length,
-            fileData,
+            fileData: fileData.toString("base64"),
           };
         })
       );
@@ -326,7 +326,7 @@ router.post(
       auditType,
       status: "pending",
       originalFilename: req.file.originalname,
-      uploadedFileData: req.file.buffer,
+      uploadedFileData: req.file.buffer.toString("base64"),
       fileCount: 0,
     }).returning();
 
@@ -423,7 +423,7 @@ router.post("/:id/retry", async (req, res): Promise<void> => {
       return;
     }
 
-    processJob(job.id, Buffer.isBuffer(job.uploadedFileData) ? job.uploadedFileData : Buffer.from(job.uploadedFileData as Uint8Array), bank, job.auditType).catch((err) => {
+    processJob(job.id, Buffer.from(job.uploadedFileData, "base64"), bank, job.auditType).catch((err) => {
       logger.error({ err, jobId: job.id }, "Unhandled retry error");
     });
   } catch (err) {
@@ -456,7 +456,7 @@ router.get("/:id/files/:filename", async (req, res): Promise<void> => {
 
     res.setHeader("Content-Type", "application/pdf");
     res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
-    res.send(Buffer.isBuffer(file.fileData) ? file.fileData : Buffer.from(file.fileData as Uint8Array));
+    res.send(Buffer.from(file.fileData, "base64"));
   } catch (err) {
     req.log.error({ err }, "Failed to download file");
     res.status(500).json({ error: "Internal server error" });
@@ -491,8 +491,7 @@ router.get("/:id/download-all", async (req, res): Promise<void> => {
 
     for (const file of files) {
       if (file.fileData) {
-        const data = Buffer.isBuffer(file.fileData) ? file.fileData : Buffer.from(file.fileData as Uint8Array);
-        archive.append(data, { name: file.filename });
+        archive.append(Buffer.from(file.fileData, "base64"), { name: file.filename });
       }
     }
 
