@@ -15,24 +15,169 @@ import {
 } from "@workspace/api-zod";
 import { logger } from "../lib/logger";
 import { generatePdf, type PdfConfig } from "../lib/pdfGenerator";
+import { runCleanup, cleanupOlderThan } from "../lib/cleanup";
 
 const router = Router();
+
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 50 * 1024 * 1024 },
+  fileFilter: (_req, file, cb) => {
+    const ext = path.extname(file.originalname).toLowerCase();
+    if (ext === ".xlsx" || ext === ".xls") {
+      cb(null, true);
+    } else {
+      cb(new Error("Only Excel files are allowed"));
+    }
+  },
+});
+
+// ── Retention config (for display in API responses) ──
+const RETENTION_COMPLETED_DAYS = Number(process.env.RETENTION_COMPLETED_DAYS) || 7;
 
 // Temp directory for processing (files are read from DB, written to temp, cleaned up)
 const TEMP_DIR = path.join(process.env.TMPDIR || "/tmp", "pdf-generator");
 fs.mkdirSync(TEMP_DIR, { recursive: true });
 
-const upload = multer({
-  storage: multer.memoryStorage(),
-  fileFilter: (_req, file, cb) => {
-    const ext = path.extname(file.originalname).toLowerCase();
-    if ([".xlsx", ".xls"].includes(ext)) {
-      cb(null, true);
-    } else {
-      cb(new Error("Only Excel files (.xlsx, .xls) are allowed"));
+// ── Validate Excel file against bank config ──
+router.post("/validate", upload.single("file"), async (req, res): Promise<void> => {
+  if (!req.file) {
+    res.status(400).json({ error: "No file uploaded" });
+    return;
+  }
+
+  const bankId = Number(req.body.bankId);
+  const auditType = req.body.auditType as string;
+
+  if (!bankId || !auditType) {
+    res.status(400).json({ error: "bankId and auditType are required" });
+    return;
+  }
+
+  try {
+    const [bank] = await db.select().from(banksTable).where(eq(banksTable.id, bankId));
+    if (!bank) {
+      res.status(404).json({ error: "Bank configuration not found" });
+      return;
     }
-  },
-  limits: { fileSize: 50 * 1024 * 1024 }, // 50 MB max
+
+    if (!bank.isActive) {
+      res.status(400).json({ error: "This bank configuration is inactive" });
+      return;
+    }
+
+    const auditTypes = (bank.auditTypes as Array<{ code: string }>) ?? [];
+    const validAuditType = auditTypes.some((t) => t.code === auditType);
+    if (!validAuditType) {
+      res.status(400).json({ error: `Invalid audit type "${auditType}". Valid types: ${auditTypes.map(t => t.code).join(", ")}` });
+      return;
+    }
+
+// Read Excel headers from uploaded file - search all sheets for columns
+    const XLSX = await import("xlsx");
+    const workbook = XLSX.read(req.file.buffer, { type: "buffer" });
+
+    const columnMapping = bank.columnMapping as {
+      branchGroupBy: string;
+      branchNameCol: string;
+      stateCol: string;
+      columns: Array<{ header: string; excelColumn: string | null }>;
+    };
+
+    const requiredCols = [
+      columnMapping.branchGroupBy,
+      columnMapping.branchNameCol,
+      columnMapping.stateCol,
+      ...columnMapping.columns.filter(c => c.excelColumn).map(c => c.excelColumn),
+    ].filter(Boolean);
+
+    const normalizedRequired = requiredCols.map(c => c!.toLowerCase());
+
+    let allHeaders: string[] = [];
+    let sheetName = "";
+
+    for (const name of workbook.SheetNames) {
+      const worksheet = workbook.Sheets[name];
+      const data = XLSX.utils.sheet_to_json(worksheet, { header: 1 }) as unknown[][];
+      if (data.length > 0) {
+        const headers = (data[0] || []).map(h => String(h || "").trim());
+        const normalizedHeaders = headers.map(h => h.toLowerCase());
+        const hasRequired = normalizedRequired.filter(req => normalizedHeaders.includes(req));
+        if (hasRequired.length > allHeaders.length) {
+          allHeaders = headers;
+          sheetName = name;
+        }
+      }
+    }
+
+    if (allHeaders.length === 0) {
+      res.json({
+        valid: false,
+        message: "No columns found in any sheet",
+        missing: requiredCols,
+        found: [],
+      });
+      return;
+    }
+
+    const headerSet = new Set(allHeaders.map(h => h.toLowerCase()));
+
+    const missing: string[] = [];
+    const found: string[] = [];
+
+    // Check branch grouping column
+    if (!headerSet.has(columnMapping.branchGroupBy.toLowerCase())) {
+      missing.push(columnMapping.branchGroupBy);
+    } else {
+      found.push(columnMapping.branchGroupBy);
+    }
+
+    // Check branch name column
+    if (columnMapping.branchNameCol && !headerSet.has(columnMapping.branchNameCol.toLowerCase())) {
+      missing.push(columnMapping.branchNameCol);
+    } else if (columnMapping.branchNameCol) {
+      found.push(columnMapping.branchNameCol);
+    }
+
+    // Check required data columns
+    for (const col of columnMapping.columns) {
+      if (col.excelColumn && !headerSet.has(col.excelColumn.toLowerCase())) {
+        missing.push(col.excelColumn);
+      } else if (col.excelColumn) {
+        found.push(col.excelColumn);
+      }
+    }
+
+    // Check for blank (hand-fill) columns - they don't need data
+    const blankCols = columnMapping.columns.filter(c => c.excelColumn === null);
+
+    const response = {
+      valid: missing.length === 0,
+      message: missing.length === 0
+        ? `All required columns found in sheet "${sheetName}"`
+        : `Missing ${missing.length} required column(s)`,
+      missing,
+      found,
+      fileRows: 0,
+      fileColumns: allHeaders.length,
+      sheetName,
+    };
+
+    if (missing.length === 0) {
+      for (const name of workbook.SheetNames) {
+        const worksheet = workbook.Sheets[name];
+        const data = XLSX.utils.sheet_to_json(worksheet, { header: 1 }) as unknown[][];
+        if (data.length > 1) {
+          response.fileRows = Math.max(response.fileRows, data.length - 1);
+        }
+      }
+    }
+
+    res.json(response);
+  } catch (err) {
+    req.log.error({ err }, "Validation error");
+    res.status(500).json({ error: "Failed to validate Excel file" });
+  }
 });
 
 const PKG_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -132,8 +277,10 @@ async function processJob(jobId: number, excelBuffer: Buffer, bank: { columnMapp
       await db.insert(generatedFilesTable).values(fileRecords);
     }
 
+    // Mark job complete AND null out the uploaded Excel data to reclaim space.
+    // The uploaded file is no longer needed after successful PDF generation.
     await db.update(jobsTable)
-      .set({ status: "completed", fileCount: files.length })
+      .set({ status: "completed", fileCount: files.length, uploadedFileData: null })
       .where(eq(jobsTable.id, jobId));
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : "Unknown error";
@@ -151,11 +298,72 @@ async function processJob(jobId: number, excelBuffer: Buffer, bank: { columnMapp
   }
 }
 
-// ── List jobs ──
+// ── Get cleanup/retention info ──
+router.get("/cleanup/info", async (_req, res): Promise<void> => {
+  res.json({
+    retentionCompletedDays: RETENTION_COMPLETED_DAYS,
+    retentionFailedDays: Number(process.env.RETENTION_FAILED_DAYS) || 1,
+    message: `Completed jobs auto-delete after ${RETENTION_COMPLETED_DAYS} days. Failed jobs auto-delete after ${Number(process.env.RETENTION_FAILED_DAYS) || 1} day(s).`,
+  });
+});
+
+// ── Manual cleanup endpoint ──
+router.delete("/cleanup", async (req, res): Promise<void> => {
+  try {
+    const days = Number(req.query.olderThanDays) || undefined;
+
+    let result;
+    if (days !== undefined) {
+      // Delete jobs older than specified days
+      result = await cleanupOlderThan(days);
+    } else {
+      // Run default scheduled cleanup
+      result = await runCleanup();
+    }
+
+    res.json({
+      message: `Cleanup completed`,
+      ...result,
+    });
+  } catch (err) {
+    req.log.error({ err }, "Failed to run cleanup");
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// ── List jobs (SELECTIVE COLUMNS — never load base64 data) ──
 router.get("/", async (req, res): Promise<void> => {
   try {
-    const jobs = await db.select().from(jobsTable).orderBy(desc(jobsTable.createdAt)).limit(200);
-    res.json(jobs);
+    const jobs = await db
+      .select({
+        id: jobsTable.id,
+        bankId: jobsTable.bankId,
+        bankName: jobsTable.bankName,
+        auditType: jobsTable.auditType,
+        status: jobsTable.status,
+        originalFilename: jobsTable.originalFilename,
+        fileCount: jobsTable.fileCount,
+        errorMessage: jobsTable.errorMessage,
+        createdAt: jobsTable.createdAt,
+        updatedAt: jobsTable.updatedAt,
+      })
+      .from(jobsTable)
+      .orderBy(desc(jobsTable.createdAt))
+      .limit(200);
+
+    // Add retention info to each job
+    const jobsWithRetention = jobs.map((job) => {
+      const expiresAt = new Date(job.createdAt.getTime() + RETENTION_COMPLETED_DAYS * 24 * 60 * 60 * 1000);
+      const daysLeft = Math.max(0, Math.ceil((expiresAt.getTime() - Date.now()) / (24 * 60 * 60 * 1000)));
+      return {
+        ...job,
+        expiresAt: expiresAt.toISOString(),
+        daysUntilExpiry: daysLeft,
+        retentionDays: RETENTION_COMPLETED_DAYS,
+      };
+    });
+
+    res.json(jobsWithRetention);
   } catch (err) {
     req.log.error({ err }, "Failed to list jobs");
     res.status(500).json({ error: "Internal server error" });
@@ -241,29 +449,60 @@ router.post(
   }
 });
 
-// ── Get job detail ──
+// ── Get job detail (SELECTIVE COLUMNS for generated files) ──
 router.get("/:id", async (req, res): Promise<void> => {
   const parsed = GetJobParams.safeParse({ id: Number(req.params.id) });
   if (!parsed.success) { res.status(400).json({ error: "Invalid id" }); return; }
   try {
-    const [job] = await db.select().from(jobsTable).where(eq(jobsTable.id, parsed.data.id));
+    const [job] = await db
+      .select({
+        id: jobsTable.id,
+        bankId: jobsTable.bankId,
+        bankName: jobsTable.bankName,
+        auditType: jobsTable.auditType,
+        status: jobsTable.status,
+        originalFilename: jobsTable.originalFilename,
+        fileCount: jobsTable.fileCount,
+        errorMessage: jobsTable.errorMessage,
+        createdAt: jobsTable.createdAt,
+        updatedAt: jobsTable.updatedAt,
+      })
+      .from(jobsTable)
+      .where(eq(jobsTable.id, parsed.data.id));
     if (!job) { res.status(404).json({ error: "Job not found" }); return; }
 
-    const files = await db.select().from(generatedFilesTable)
+    // Select only metadata columns from generated files — never load fileData
+    const files = await db
+      .select({
+        id: generatedFilesTable.id,
+        jobId: generatedFilesTable.jobId,
+        filename: generatedFilesTable.filename,
+        branchCode: generatedFilesTable.branchCode,
+        branchName: generatedFilesTable.branchName,
+        rowCount: generatedFilesTable.rowCount,
+        fileSize: generatedFilesTable.fileSize,
+        createdAt: generatedFilesTable.createdAt,
+      })
+      .from(generatedFilesTable)
       .where(eq(generatedFilesTable.jobId, job.id));
 
     const baseUrl = `/api/jobs/${job.id}`;
     const enrichedFiles = files.map((f) => ({
       ...f,
-      fileData: undefined,
       downloadUrl: `${baseUrl}/files/${encodeURIComponent(f.filename)}`,
     }));
 
+    // Compute retention info
+    const expiresAt = new Date(job.createdAt.getTime() + RETENTION_COMPLETED_DAYS * 24 * 60 * 60 * 1000);
+    const daysLeft = Math.max(0, Math.ceil((expiresAt.getTime() - Date.now()) / (24 * 60 * 60 * 1000)));
+
     res.json({
       ...job,
-      uploadedFileData: undefined,
       files: enrichedFiles,
       downloadAllUrl: files.length > 0 ? `${baseUrl}/download-all` : null,
+      expiresAt: expiresAt.toISOString(),
+      daysUntilExpiry: daysLeft,
+      retentionDays: RETENTION_COMPLETED_DAYS,
     });
   } catch (err) {
     req.log.error({ err }, "Failed to get job");
@@ -276,7 +515,7 @@ router.delete("/:id", async (req, res): Promise<void> => {
   const parsed = DeleteJobParams.safeParse({ id: Number(req.params.id) });
   if (!parsed.success) { res.status(400).json({ error: "Invalid id" }); return; }
   try {
-    const [job] = await db.select().from(jobsTable).where(eq(jobsTable.id, parsed.data.id));
+    const [job] = await db.select({ id: jobsTable.id }).from(jobsTable).where(eq(jobsTable.id, parsed.data.id));
     if (!job) { res.status(404).json({ error: "Job not found" }); return; }
 
     await db.delete(generatedFilesTable).where(eq(generatedFilesTable.jobId, job.id));
@@ -297,7 +536,7 @@ router.post("/:id/retry", async (req, res): Promise<void> => {
     const [job] = await db.select().from(jobsTable).where(eq(jobsTable.id, parsed.data.id));
     if (!job) { res.status(404).json({ error: "Job not found" }); return; }
     if (!job.uploadedFileData) {
-      res.status(400).json({ error: "Original file is no longer available for retry" });
+      res.status(400).json({ error: "Original file is no longer available for retry (reclaimed after successful processing)" });
       return;
     }
     if (job.status === "processing") {
@@ -316,11 +555,6 @@ router.post("/:id/retry", async (req, res): Promise<void> => {
       .returning();
 
     res.json(updatedJob);
-
-    if (!job.uploadedFileData) {
-      logger.error({ jobId: job.id }, "No uploaded file data found for retry");
-      return;
-    }
 
     processJob(job.id, Buffer.from(job.uploadedFileData, "base64"), bank, job.auditType).catch((err) => {
       logger.error({ err, jobId: job.id }, "Unhandled retry error");
@@ -353,29 +587,39 @@ router.get("/:id/files/:filename", async (req, res): Promise<void> => {
     }
 
     if (!file.fileData) {
-      res.status(404).json({ error: "File data not found" });
+      res.status(410).json({ error: "File data has been cleaned up (expired)" });
       return;
     }
+
+    const pdfBuffer = Buffer.from(file.fileData, "base64");
 
     const forceDownload = req.query.download === "1";
     const disposition = forceDownload ? "attachment" : "inline";
     res.setHeader("Content-Type", "application/pdf");
     res.setHeader("Content-Disposition", `${disposition}; filename="${encodeURIComponent(filename)}"`);
+    res.setHeader("Content-Length", pdfBuffer.length);
     res.setHeader("Cache-Control", "private, max-age=3600");
-    res.send(Buffer.from(file.fileData, "base64"));
+    res.send(pdfBuffer);
   } catch (err) {
     req.log.error({ err }, "Failed to download file");
     res.status(500).json({ error: "Internal server error" });
   }
 });
 
-// ── Download all as ZIP ──
+// ── Download all as ZIP (JSZip) ──
 router.get("/:id/download-all", async (req, res): Promise<void> => {
   const jobId = Number(req.params.id);
   if (isNaN(jobId)) { res.status(400).json({ error: "Invalid id" }); return; }
 
   try {
-    const [job] = await db.select().from(jobsTable).where(eq(jobsTable.id, jobId));
+    const [job] = await db
+      .select({
+        id: jobsTable.id,
+        bankName: jobsTable.bankName,
+        auditType: jobsTable.auditType,
+      })
+      .from(jobsTable)
+      .where(eq(jobsTable.id, jobId));
     if (!job) { res.status(404).json({ error: "Job not found" }); return; }
 
     const files = await db.select().from(generatedFilesTable).where(eq(generatedFilesTable.jobId, jobId));
@@ -384,8 +628,14 @@ router.get("/:id/download-all", async (req, res): Promise<void> => {
       return;
     }
 
+    const filesWithData = files.filter((f) => f.fileData);
+    if (filesWithData.length === 0) {
+      res.status(410).json({ error: "File data has been cleaned up (expired)" });
+      return;
+    }
+
     const zip = new JSZip();
-    for (const file of files) {
+    for (const file of filesWithData) {
       if (file.fileData) {
         zip.file(file.filename, Buffer.from(file.fileData, "base64"));
       }

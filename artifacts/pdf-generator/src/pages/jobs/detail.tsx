@@ -184,6 +184,17 @@ export default function JobDetail() {
         </Alert>
       )}
 
+      {job.daysUntilExpiry !== undefined && job.daysUntilExpiry <= 7 && job.status === 'completed' && (
+        <Alert variant="warning" className="border-amber-500 bg-amber-50 dark:bg-amber-900/20">
+          <AlertTriangle className="h-4 w-4 text-amber-600 dark:text-amber-400" />
+          <AlertTitle className="text-amber-800 dark:text-amber-300">Files will be deleted soon</AlertTitle>
+          <AlertDescription className="text-amber-700 dark:text-amber-400">
+            This job's files will be automatically deleted in {job.daysUntilExpiry} day{job.daysUntilExpiry === 1 ? '' : 's'}. 
+            Please download or share the files before they expire.
+          </AlertDescription>
+        </Alert>
+      )}
+
       {isWorking && (
         <Card className="border-primary/20 bg-primary/5">
           <CardContent className="pt-6">

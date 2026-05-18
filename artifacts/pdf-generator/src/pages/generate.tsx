@@ -5,7 +5,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter }
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Label } from "@/components/ui/label";
-import { UploadCloud, File, AlertCircle, Loader2, Info, CheckCircle2 } from "lucide-react";
+import { UploadCloud, File, AlertCircle, Loader2, Info, CheckCircle2, CheckCircle, XCircle } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { useToast } from "@/hooks/use-toast";
 import { Badge } from "@/components/ui/badge";
@@ -23,11 +23,37 @@ export default function Generate() {
   const [isDragging, setIsDragging] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  
+  const [isValidating, setIsValidating] = useState(false);
+  const [validationResult, setValidationResult] = useState<{
+    valid: boolean;
+    message: string;
+    missing: string[];
+    found: string[];
+    fileRows: number;
+    fileColumns: number;
+  } | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const selectedBank = useMemo(() => banks?.find(b => b.id.toString() === bankId), [banks, bankId]);
   const availableAuditTypes = selectedBank?.auditTypes || [];
+  
+  const handleBankChange = (val: string) => {
+    setBankId(val);
+    setAuditType("");
+    setValidationResult(null);
+    setError(null);
+  };
+  
+  const handleAuditTypeChange = (val: string) => {
+    setAuditType(val);
+    setValidationResult(null);
+    setError(null);
+    if (file) {
+      validateFile(file);
+    }
+  };
 
   const handleDragOver = (e: React.DragEvent) => {
     e.preventDefault();
@@ -47,16 +73,56 @@ export default function Generate() {
       if (droppedFile.name.endsWith('.xlsx') || droppedFile.name.endsWith('.xls')) {
         setFile(droppedFile);
         setError(null);
+        setValidationResult(null);
+        validateFile(droppedFile);
       } else {
         setError("Please upload a valid Excel file (.xlsx or .xls)");
       }
     }
   };
 
+  const validateFile = async (fileToValidate: File) => {
+    if (!bankId || !auditType) {
+      setValidationResult(null);
+      return;
+    }
+    
+    setIsValidating(true);
+    setValidationResult(null);
+    
+    const formData = new FormData();
+    formData.append("bankId", bankId);
+    formData.append("auditType", auditType);
+    formData.append("file", fileToValidate);
+    
+    try {
+      const response = await fetch("/api/jobs/validate", {
+        method: "POST",
+        body: formData,
+      });
+      
+      const result = await response.json();
+      setValidationResult(result);
+      
+      if (!result.valid) {
+        setError(result.message);
+      } else {
+        setError(null);
+      }
+    } catch (err) {
+      console.error("Validation error:", err);
+    } finally {
+      setIsValidating(false);
+    }
+  };
+
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) {
-      setFile(e.target.files[0]);
+      const selectedFile = e.target.files[0];
+      setFile(selectedFile);
       setError(null);
+      setValidationResult(null);
+      validateFile(selectedFile);
     }
   };
 
@@ -65,6 +131,11 @@ export default function Generate() {
     
     if (!bankId || !auditType || !file) {
       setError("Please fill all required fields and select a file.");
+      return;
+    }
+    
+    if (validationResult && !validationResult.valid) {
+      setError("Please fix the missing columns in your Excel file before submitting.");
       return;
     }
 
@@ -148,7 +219,7 @@ export default function Generate() {
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div className="space-y-2">
                     <Label htmlFor="bank">Bank</Label>
-                    <Select value={bankId} onValueChange={(val) => { setBankId(val); setAuditType(""); }}>
+                    <Select value={bankId} onValueChange={handleBankChange}>
                       <SelectTrigger id="bank" disabled={loadingBanks}>
                         <SelectValue placeholder={loadingBanks ? "Loading..." : "Select bank"} />
                       </SelectTrigger>
@@ -162,7 +233,7 @@ export default function Generate() {
 
                   <div className="space-y-2">
                     <Label htmlFor="auditType">Audit Type</Label>
-                    <Select value={auditType} onValueChange={setAuditType} disabled={!bankId || availableAuditTypes.length === 0}>
+                    <Select value={auditType} onValueChange={handleAuditTypeChange} disabled={!bankId || availableAuditTypes.length === 0}>
                       <SelectTrigger id="auditType">
                         <SelectValue placeholder="Select audit type" />
                       </SelectTrigger>
@@ -236,6 +307,52 @@ export default function Generate() {
                       </div>
                     </div>
                   )}
+                  
+                  {isValidating && (
+                    <div className="mt-4 p-4 rounded-lg bg-muted/50 border border-muted flex items-center gap-3">
+                      <Loader2 className="h-5 w-5 animate-spin text-primary" />
+                      <span className="text-sm">Validating Excel file...</span>
+                    </div>
+                  )}
+                  
+                  {validationResult && (
+                    <div className={`mt-4 p-4 rounded-lg border ${
+                      validationResult.valid 
+                        ? 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800' 
+                        : 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800'
+                    }`}>
+                      <div className="flex items-center gap-2 mb-2">
+                        {validationResult.valid ? (
+                          <>
+                            <CheckCircle className="h-5 w-5 text-green-600 dark:text-green-400" />
+                            <span className="font-semibold text-green-800 dark:text-green-300">File is valid</span>
+                          </>
+                        ) : (
+                          <>
+                            <XCircle className="h-5 w-5 text-red-600 dark:text-red-400" />
+                            <span className="font-semibold text-red-800 dark:text-red-300">Missing columns</span>
+                          </>
+                        )}
+                      </div>
+                      <p className="text-sm text-muted-foreground mb-3">{validationResult.message}</p>
+                      
+                      {validationResult.valid ? (
+                        <div className="flex items-center gap-4 text-xs text-muted-foreground">
+                          <span>{validationResult.fileRows} data rows</span>
+                          <span>•</span>
+                          <span>{validationResult.fileColumns} columns</span>
+                        </div>
+                      ) : (
+                        <div className="flex flex-wrap gap-2 mt-2">
+                          {validationResult.missing.map(col => (
+                            <Badge key={col} variant="destructive" className="font-mono text-xs">
+                              {col}
+                            </Badge>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
               </CardContent>
               
@@ -243,7 +360,7 @@ export default function Generate() {
                 <Button 
                   type="submit" 
                   size="lg" 
-                  disabled={isSubmitting || !bankId || !auditType || !file}
+                  disabled={isSubmitting || !bankId || !auditType || !file || (validationResult !== null && !validationResult.valid)}
                   className="w-full sm:w-auto"
                 >
                   {isSubmitting ? (

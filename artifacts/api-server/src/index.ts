@@ -1,6 +1,6 @@
 import app from "./app";
 import { logger } from "./lib/logger";
-import { runCleanup } from "./lib/cleanup";
+import { runCleanup, nullifyProcessedUploads } from "./lib/cleanup";
 
 const rawPort = process.env["PORT"];
 
@@ -24,9 +24,20 @@ app.listen(port, (err) => {
 
   logger.info({ port }, "Server listening");
 
-  // Run cleanup on startup, then every 6 hours
-  runCleanup().catch((e) => logger.warn({ e }, "Startup cleanup failed"));
-  setInterval(() => {
-    runCleanup().catch((e) => logger.warn({ e }, "Scheduled cleanup failed"));
-  }, 6 * 60 * 60 * 1000);
+  async function runScheduledTasks() {
+    try {
+      const cleanupResult = await runCleanup();
+      logger.info({ result: cleanupResult }, "Scheduled cleanup completed");
+
+      const nullifiedCount = await nullifyProcessedUploads();
+      if (nullifiedCount > 0) {
+        logger.info({ count: nullifiedCount }, "Nullified uploaded files");
+      }
+    } catch (e) {
+      logger.warn({ e }, "Scheduled tasks failed");
+    }
+  }
+
+  runScheduledTasks().catch((e) => logger.warn({ e }, "Startup tasks failed"));
+  setInterval(runScheduledTasks, 6 * 60 * 60 * 1000);
 });
