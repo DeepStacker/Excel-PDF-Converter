@@ -6,16 +6,17 @@ import { JobStatusBadge } from "@/components/status-badge";
 import { formatDate, formatBytes } from "@/lib/format";
 import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Download, RefreshCw, Trash2, FileText, AlertTriangle, Share2, Copy, Eye } from "lucide-react";
+import { Download, RefreshCw, Trash2, FileText, AlertTriangle, Share2, Copy, Eye, Search, ArrowUp, ArrowDown } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { useLocation } from "wouter";
 import { useToast } from "@/hooks/use-toast";
 import { Progress } from "@/components/ui/progress";
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 export default function JobDetail() {
   const [match, params] = useRoute("/jobs/:id");
@@ -28,6 +29,20 @@ export default function JobDetail() {
   const [isShareDialogOpen, setIsShareDialogOpen] = useState(false);
   const [shareExpiry, setShareExpiry] = useState<string>("never");
   const [downloadingZip, setDownloadingZip] = useState(false);
+  const [fileSearch, setFileSearch] = useState("");
+  const [sortField, setSortField] = useState<"branchName" | "fileSize" | "rowCount">("branchName");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
+
+  const { data: job, isLoading, isError } = useGetJob(id, {
+    query: {
+      queryKey: getGetJobQueryKey(id),
+      enabled: !!id,
+      refetchInterval: (query) => {
+        const data = query.state.data;
+        return data?.status === 'pending' || data?.status === 'processing' ? 500 : false;
+      }
+    }
+  });
 
   const downloadBlob = async (url: string, filename: string) => {
     try {
@@ -58,17 +73,6 @@ export default function JobDetail() {
   const handleDownloadPdf = (downloadUrl: string, filename: string) => {
     downloadBlob(`${downloadUrl}?download=1`, filename);
   };
-
-  const { data: job, isLoading, isError } = useGetJob(id, {
-    query: {
-      queryKey: getGetJobQueryKey(id),
-      enabled: !!id,
-      refetchInterval: (query) => {
-        const data = query.state.data;
-        return data?.status === 'pending' || data?.status === 'processing' ? 500 : false;
-      }
-    }
-  });
 
   const retryMutation = useRetryJob({
     mutation: {
@@ -132,6 +136,26 @@ export default function JobDetail() {
     setIsShareDialogOpen(true);
   };
 
+  const filteredFiles = useMemo(() => {
+    const files = job?.files || [];
+    let result = [...files];
+    if (fileSearch) {
+      const search = fileSearch.toLowerCase();
+      result = result.filter(f =>
+        f.branchName.toLowerCase().includes(search) ||
+        f.branchCode.toLowerCase().includes(search)
+      );
+    }
+    result.sort((a, b) => {
+      let cmp = 0;
+      if (sortField === "branchName") cmp = a.branchName.localeCompare(b.branchName);
+      else if (sortField === "fileSize") cmp = (a.fileSize ?? 0) - (b.fileSize ?? 0);
+      else if (sortField === "rowCount") cmp = (a.rowCount ?? 0) - (b.rowCount ?? 0);
+      return sortDir === "asc" ? cmp : -cmp;
+    });
+    return result;
+  }, [job?.files, fileSearch, sortField, sortDir]);
+
   if (isLoading) {
     return <div className="space-y-6 animate-pulse">
       <div className="h-24 bg-muted rounded-xl"></div>
@@ -152,7 +176,7 @@ export default function JobDetail() {
   const progress = totalCount > 0
     ? Math.round((processedCount / totalCount) * 100)
     : (job.status === 'completed' ? 100 : 0);
-  
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4">
@@ -267,10 +291,44 @@ export default function JobDetail() {
             <CardTitle className="text-lg">Generated Files</CardTitle>
             <CardDescription>
               {job.files?.length || 0} PDFs generated for this batch.
+              {filteredFiles.length !== (job.files?.length || 0) && (
+                <span className="ml-2 text-primary">(filtered: {filteredFiles.length})</span>
+              )}
             </CardDescription>
           </CardHeader>
+          {(job.files?.length ?? 0) > 5 && (
+            <div className="px-4 pb-2 flex flex-col sm:flex-row gap-2">
+              <div className="relative flex-1">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                <Input
+                  placeholder="Search branches..."
+                  value={fileSearch}
+                  onChange={(e) => setFileSearch(e.target.value)}
+                  className="pl-10"
+                />
+              </div>
+              <Select value={sortField} onValueChange={(v: any) => setSortField(v)}>
+                <SelectTrigger className="w-full sm:w-[140px]">
+                  <SelectValue placeholder="Sort by" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="branchName">Name</SelectItem>
+                  <SelectItem value="fileSize">Size</SelectItem>
+                  <SelectItem value="rowCount">Rows</SelectItem>
+                </SelectContent>
+              </Select>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setSortDir(d => d === "asc" ? "desc" : "asc")}
+                title={sortDir === "asc" ? "Ascending" : "Descending"}
+              >
+                {sortDir === "asc" ? <ArrowUp className="h-4 w-4" /> : <ArrowDown className="h-4 w-4" />}
+              </Button>
+            </div>
+          )}
           <div className="overflow-x-auto">
-            {job.files && job.files.length > 0 ? (
+            {filteredFiles.length > 0 ? (
               <Table>
                 <TableHeader>
                   <TableRow>
@@ -282,7 +340,7 @@ export default function JobDetail() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {job.files.map((file, i) => (
+                  {filteredFiles.map((file, i) => (
                     <TableRow key={i}>
                       <TableCell className="font-mono text-xs">{file.branchCode}</TableCell>
                       <TableCell className="font-medium truncate max-w-[200px]" title={file.branchName}>
@@ -319,7 +377,7 @@ export default function JobDetail() {
               </Table>
             ) : (
               <div className="p-8 text-center text-muted-foreground text-sm">
-                {isWorking ? "Waiting for files..." : "No files generated."}
+                {isWorking ? "Waiting for files..." : fileSearch ? "No matching files." : "No files generated."}
               </div>
             )}
           </div>
