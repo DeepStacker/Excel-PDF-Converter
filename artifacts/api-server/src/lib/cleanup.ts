@@ -1,12 +1,14 @@
 import fs from "fs";
 import path from "path";
+import { fileURLToPath } from "url";
 import { db } from "@workspace/db";
 import { jobsTable } from "@workspace/db";
-import { inArray, notInArray, sql } from "drizzle-orm";
+import { inArray, sql } from "drizzle-orm";
 import { logger } from "./logger";
 
-const UPLOADS_DIR = path.join(process.cwd(), "uploads");
-const OUTPUTS_DIR = path.join(process.cwd(), "outputs");
+const PKG_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const UPLOADS_DIR = path.join(PKG_ROOT, "uploads");
+const OUTPUTS_DIR = path.join(PKG_ROOT, "outputs");
 
 /**
  * Remove orphaned upload files that are no longer referenced by any job row.

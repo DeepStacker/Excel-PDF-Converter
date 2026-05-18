@@ -2,6 +2,7 @@ import { Router } from "express";
 import multer from "multer";
 import path from "path";
 import fs from "fs";
+import { fileURLToPath } from "url";
 import { spawn } from "child_process";
 import { createRequire } from "module";
 import type { Archiver as ArchiverInstance } from "archiver";
@@ -20,8 +21,11 @@ import { logger } from "../lib/logger";
 
 const router = Router();
 
-const UPLOADS_DIR = path.join(process.cwd(), "uploads");
-const OUTPUTS_DIR = path.join(process.cwd(), "outputs");
+// Anchor paths to the source file location so they work regardless of cwd
+// Compiled output lives at dist/index.mjs → one level up is the package root
+const PKG_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const UPLOADS_DIR = path.join(PKG_ROOT, "uploads");
+const OUTPUTS_DIR = path.join(PKG_ROOT, "outputs");
 fs.mkdirSync(UPLOADS_DIR, { recursive: true });
 fs.mkdirSync(OUTPUTS_DIR, { recursive: true });
 
@@ -47,7 +51,7 @@ const upload = multer({
   limits: { fileSize: 50 * 1024 * 1024 }, // 50 MB max
 });
 
-const PYTHON_SCRIPT = path.join(process.cwd(), "scripts", "pdf_generator.py");
+const PYTHON_SCRIPT = path.join(PKG_ROOT, "scripts", "pdf_generator.py");
 const JOB_TIMEOUT_MS = 8 * 60 * 1000; // 8 minutes
 
 // ── Concurrency semaphore: max 2 simultaneous Python processes ──
