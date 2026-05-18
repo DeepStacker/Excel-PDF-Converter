@@ -6,7 +6,7 @@ import { fileURLToPath } from "url";
 import JSZip from "jszip";
 import { db } from "@workspace/db";
 import { jobsTable, generatedFilesTable, banksTable } from "@workspace/db";
-import { eq, desc, and } from "drizzle-orm";
+import { eq, desc, and, gte, lte, sql } from "drizzle-orm";
 import {
   CreateJobBody,
   GetJobParams,
@@ -354,24 +354,58 @@ router.delete("/cleanup", async (req, res): Promise<void> => {
 // ── List jobs (SELECTIVE COLUMNS — never load base64 data) ──
 router.get("/", async (req, res): Promise<void> => {
   try {
-    const jobs = await db
-      .select({
-        id: jobsTable.id,
-        bankId: jobsTable.bankId,
-        bankName: jobsTable.bankName,
-        auditType: jobsTable.auditType,
-        status: jobsTable.status,
-        originalFilename: jobsTable.originalFilename,
-        fileCount: jobsTable.fileCount,
-        errorMessage: jobsTable.errorMessage,
-        createdAt: jobsTable.createdAt,
-        updatedAt: jobsTable.updatedAt,
-      })
-      .from(jobsTable)
-      .orderBy(desc(jobsTable.createdAt))
-      .limit(200);
+    const page = Math.max(1, Number(req.query.page) || 1);
+    const limit = Math.min(100, Math.max(1, Number(req.query.limit) || 20));
+    const offset = (page - 1) * limit;
+    const status = req.query.status as string | undefined;
+    const bankId = req.query.bankId ? Number(req.query.bankId) : undefined;
+    const dateFrom = req.query.dateFrom ? new Date(req.query.dateFrom as string) : undefined;
+    const dateTo = req.query.dateTo ? new Date(req.query.dateTo as string) : undefined;
 
-    // Add retention info to each job
+    const conditions = [];
+    if (status && ["pending", "processing", "completed", "failed"].includes(status)) {
+      conditions.push(eq(jobsTable.status, status));
+    }
+    if (bankId) {
+      conditions.push(eq(jobsTable.bankId, bankId));
+    }
+    if (dateFrom) {
+      conditions.push(gte(jobsTable.createdAt, dateFrom));
+    }
+    if (dateTo) {
+      conditions.push(lte(jobsTable.createdAt, dateTo));
+    }
+
+    const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
+
+    const [jobs, countResult] = await Promise.all([
+      db
+        .select({
+          id: jobsTable.id,
+          bankId: jobsTable.bankId,
+          bankName: jobsTable.bankName,
+          auditType: jobsTable.auditType,
+          status: jobsTable.status,
+          originalFilename: jobsTable.originalFilename,
+          fileCount: jobsTable.fileCount,
+          errorMessage: jobsTable.errorMessage,
+          createdAt: jobsTable.createdAt,
+          updatedAt: jobsTable.updatedAt,
+        })
+        .from(jobsTable)
+        .where(whereClause)
+        .orderBy(desc(jobsTable.createdAt))
+        .limit(limit)
+        .offset(offset),
+      db
+        .select({ count: sql<number>`count(*)` })
+        .from(jobsTable)
+        .where(whereClause),
+    ]);
+
+    const total = Number(countResult[0]?.count) || 0;
+    const totalPages = Math.ceil(total / limit);
+
     const jobsWithRetention = jobs.map((job) => {
       const expiresAt = new Date(job.createdAt.getTime() + RETENTION_COMPLETED_DAYS * 24 * 60 * 60 * 1000);
       const daysLeft = Math.max(0, Math.ceil((expiresAt.getTime() - Date.now()) / (24 * 60 * 60 * 1000)));
@@ -383,7 +417,16 @@ router.get("/", async (req, res): Promise<void> => {
       };
     });
 
-    res.json(jobsWithRetention);
+    res.json({
+      data: jobsWithRetention,
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages,
+        hasMore: page < totalPages,
+      },
+    });
   } catch (err) {
     req.log.error({ err }, "Failed to list jobs");
     res.status(500).json({ error: "Internal server error" });
