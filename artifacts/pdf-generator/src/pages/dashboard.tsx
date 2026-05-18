@@ -98,7 +98,7 @@ export default function Dashboard() {
               <stat.icon className={`h-4 w-4 ${stat.className || "text-muted-foreground"}`} />
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold">{stat.value.toLocaleString()}</div>
+              <div className="text-2xl font-bold">{(stat.value ?? 0).toLocaleString()}</div>
             </CardContent>
           </Card>
         ))}
