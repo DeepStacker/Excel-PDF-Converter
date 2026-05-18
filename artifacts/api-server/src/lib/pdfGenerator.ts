@@ -72,7 +72,8 @@ function generateHtml(
   branchName: string,
   state: string,
   columns: ColumnConfig[],
-  config: PdfConfig
+  config: PdfConfig,
+  columnNameMap: Map<string, string>
 ): string {
   const { pdfStyle } = config;
   const fontSize = pdfStyle.fontSize || 9;
@@ -148,9 +149,13 @@ function generateHtml(
   // Data rows
   const dataRowsHtml = rows.map((row, idx) => {
     const cells = columns.map(col => {
-      let value = col.excelColumn ? String(row[col.excelColumn] || "") : "";
+      let value = "";
+      if (col.excelColumn) {
+        const actualColName = columnNameMap.get(col.excelColumn.toLowerCase()) || col.excelColumn;
+        value = String(row[actualColName] || "");
+      }
       if (col.dataType === "number" && col.excelColumn) {
-        value = formatNumber(row[col.excelColumn]);
+        value = formatNumber(row[columnNameMap.get(col.excelColumn.toLowerCase()) || col.excelColumn] || "");
       }
       const align = col.dataType === "number" ? "center" : "left";
       const bgColor = idx % 2 === 1 ? "#F2F2F2" : "#FFFFFF";
@@ -192,26 +197,108 @@ function generateHtml(
 </html>`;
 }
 
-function readExcel(excelPath: string, colMap: Record<string, unknown>): { headers: string[]; rows: Record<string, unknown>[] } {
-  const workbook = XLSX.readFile(excelPath);
-  const sheetName = workbook.SheetNames[0];
-  const worksheet = workbook.Sheets[sheetName];
-  const data = XLSX.utils.sheet_to_json(worksheet, { defval: "" });
+function findRequiredColumns(columns: ColumnConfig[]): Set<string> {
+  const required = new Set<string>();
+  for (const col of columns) {
+    if (col.excelColumn) {
+      required.add(col.excelColumn);
+    }
+  }
+  return required;
+}
 
-  return { headers: [], rows: data as Record<string, unknown>[] };
+function findBestSheet(workbook: XLSX.WorkBook, requiredColumns: Set<string>, branchGroupBy: string, branchNameCol: string): string | null {
+  for (const sheetName of workbook.SheetNames) {
+    const worksheet = workbook.Sheets[sheetName];
+    const range = XLSX.utils.decode_range(worksheet["!ref"] || "A1");
+    if (range.e.r === 0) continue;
+    
+    const headers: string[] = [];
+    for (let C = range.s.c; C <= range.e.c; C++) {
+      const cell = worksheet[XLSX.utils.encode_cell({ r: 0, c: C })];
+      headers.push(cell ? String(cell.v || "").trim() : "");
+    }
+    
+    const headerSet = new Set(headers.map(h => h.toLowerCase()));
+    let matchCount = 0;
+    
+    if (headerSet.has(branchGroupBy.toLowerCase())) matchCount++;
+    if (branchNameCol && headerSet.has(branchNameCol.toLowerCase())) matchCount++;
+    
+    for (const col of requiredColumns) {
+      if (headerSet.has(col.toLowerCase())) matchCount++;
+    }
+    
+    if (matchCount >= 2) {
+      return sheetName;
+    }
+  }
+  return workbook.SheetNames[0] || null;
+}
+
+function normalizeHeaders(headers: string[]): Map<string, string> {
+  const map = new Map<string, string>();
+  for (let i = 0; i < headers.length; i++) {
+    const lower = headers[i].toLowerCase().trim();
+    if (lower) {
+      map.set(lower, headers[i]);
+    }
+  }
+  return map;
+}
+
+function readExcel(excelPath: string, columnMapping: { branchGroupBy: string; branchNameCol: string; stateCol: string; columns: ColumnConfig[] }): { rows: Record<string, unknown>[]; allRows: number } {
+  const buffer = fs.readFileSync(excelPath);
+  const workbook = XLSX.read(buffer, { type: "buffer", cellDates: true });
+  
+  const requiredColumns = findRequiredColumns(columnMapping.columns);
+  const sheetName = findBestSheet(workbook, requiredColumns, columnMapping.branchGroupBy, columnMapping.branchNameCol);
+  
+  if (!sheetName) {
+    throw new Error("No valid sheet found in Excel file");
+  }
+  
+  const worksheet = workbook.Sheets[sheetName];
+  const range = XLSX.utils.decode_range(worksheet["!ref"] || "A1");
+  
+  const headers: string[] = [];
+  for (let C = range.s.c; C <= range.e.c; C++) {
+    const cell = worksheet[XLSX.utils.encode_cell({ r: 0, c: C })];
+    headers.push(cell ? String(cell.v || "").trim() : "");
+  }
+  
+  const headerMap = normalizeHeaders(headers);
+  
+  const rows: Record<string, unknown>[] = [];
+  
+  for (let R = range.s.r + 1; R <= range.e.r; R++) {
+    const row: Record<string, unknown> = {};
+    let hasData = false;
+    
+    for (let C = range.s.c; C <= range.e.c; C++) {
+      const cell = worksheet[XLSX.utils.encode_cell({ r: R, c: C })];
+      const header = headers[C];
+      if (header) {
+        const val = cell ? (cell.v !== undefined && cell.v !== null ? cell.v : "") : "";
+        row[header] = val;
+        if (val !== "" && val !== undefined) hasData = true;
+      }
+    }
+    
+    if (hasData) {
+      rows.push(row);
+    }
+  }
+  
+  return { rows, allRows: rows.length };
 }
 
 let browser: Browser | null = null;
 
-const CHROMIUM_PATH =
-  process.env.PUPPETEER_EXECUTABLE_PATH ??
-  "/nix/store/qa9cnw4v5xkxyip6mb9kxqfq1z4x2dx1-chromium-138.0.7204.100/bin/chromium";
-
 async function getBrowser(): Promise<Browser> {
   if (!browser || !browser.connected) {
-    browser = await puppeteer.launch({
+    const launchOptions: Record<string, any> = {
       headless: true,
-      executablePath: CHROMIUM_PATH,
       args: [
         "--no-sandbox",
         "--disable-setuid-sandbox",
@@ -220,7 +307,13 @@ async function getBrowser(): Promise<Browser> {
         "--no-first-run",
         "--no-zygote",
       ],
-    });
+    };
+    
+    if (process.env.PUPPETEER_EXECUTABLE_PATH) {
+      launchOptions.executablePath = process.env.PUPPETEER_EXECUTABLE_PATH;
+    }
+
+    browser = await puppeteer.launch(launchOptions);
   }
   return browser;
 }
@@ -241,23 +334,39 @@ export async function generatePdf(
     const { rows } = readExcel(excelPath, columnMapping);
 
     if (rows.length === 0) {
-      return { success: false, error: "Excel file is empty" };
+      return { success: false, error: "Excel file has no data rows" };
+    }
+
+    const columnNameMap = new Map<string, string>();
+    if (rows.length > 0) {
+      for (const key of Object.keys(rows[0])) {
+        columnNameMap.set(key.toLowerCase(), key);
+      }
     }
 
     const groups: Record<string, { rows: Record<string, unknown>[]; branchName: string; state: string }> = {};
     for (const row of rows) {
-      const branchCode = String(row[branchGroupBy] || "Unknown").trim();
-      if (!branchCode || branchCode === "None") {
+      const branchKey = columnNameMap.get(branchGroupBy.toLowerCase()) || branchGroupBy;
+      const branchCode = String(row[branchKey] || "Unknown").trim();
+      if (!branchCode || branchCode === "None" || branchCode === "") {
         continue;
       }
+      
+      const nameKey = columnNameMap.get(branchNameCol.toLowerCase()) || branchNameCol;
+      const stateKey = columnNameMap.get(stateCol.toLowerCase()) || stateCol;
+      
       if (!groups[branchCode]) {
         groups[branchCode] = {
           rows: [],
-          branchName: String(row[branchNameCol] || branchCode).trim(),
-          state: String(row[stateCol] || "").trim(),
+          branchName: String(row[nameKey] || branchCode).trim(),
+          state: String(row[stateKey] || "").trim(),
         };
       }
       groups[branchCode].rows.push(row);
+    }
+
+    if (Object.keys(groups).length === 0) {
+      return { success: false, error: `No valid branches found. Check if "${branchGroupBy}" column exists in the Excel file.` };
     }
 
     const generatedFiles: GeneratedFile[] = [];
@@ -265,6 +374,13 @@ export async function generatePdf(
     const page = await browser.newPage();
 
     const isLandscape = config.pdfStyle.pageOrientation !== "portrait";
+
+    const configColumnMap = new Map<string, ColumnConfig>();
+    for (const col of columns) {
+      if (col.excelColumn) {
+        configColumnMap.set(col.excelColumn.toLowerCase(), col);
+      }
+    }
 
     for (const [branchCode, group] of Object.entries(groups)) {
       const safeName = group.branchName.replace(/[^\w\s\-.]/g, "_").replace(/[\s_]+/g, "_").slice(0, 100) || branchCode;
@@ -278,7 +394,8 @@ export async function generatePdf(
         group.branchName,
         group.state,
         columns,
-        config
+        config,
+        columnNameMap
       );
 
       await page.setContent(html, { waitUntil: "load" });
