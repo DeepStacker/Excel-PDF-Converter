@@ -11,7 +11,7 @@ interface ColumnConfig {
   headerColor?: string;
 }
 
-interface PdfConfig {
+export interface PdfConfig {
   columnMapping: {
     branchGroupBy: string;
     branchNameCol: string;
@@ -149,7 +149,7 @@ function generateHtml(
   const dataRowsHtml = rows.map((row, idx) => {
     const cells = columns.map(col => {
       let value = col.excelColumn ? String(row[col.excelColumn] || "") : "";
-      if (col.dataType === "number") {
+      if (col.dataType === "number" && col.excelColumn) {
         value = formatNumber(row[col.excelColumn]);
       }
       const align = col.dataType === "number" ? "center" : "left";
@@ -269,7 +269,7 @@ export async function generatePdf(
         config
       );
 
-      await page.setContent(html, { waitUntil: "networkidle0" });
+      await page.setContent(html, { waitUntil: "load" });
 
       await page.pdf({
         path: filepath,

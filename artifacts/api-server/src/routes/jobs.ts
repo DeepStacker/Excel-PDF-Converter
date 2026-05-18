@@ -17,7 +17,7 @@ import {
   RetryJobParams,
 } from "@workspace/api-zod";
 import { logger } from "../lib/logger";
-import { generatePdf } from "../lib/pdfGenerator";
+import { generatePdf, type PdfConfig } from "../lib/pdfGenerator";
 
 const router = Router();
 
@@ -85,7 +85,7 @@ function runPdfGenerator(
   });
 
   return Promise.race([
-    generatePdf(excelPath, outputDir, auditType, config as { columnMapping: unknown; pdfStyle: unknown }),
+    generatePdf(excelPath, outputDir, auditType, config as unknown as PdfConfig),
     timeoutPromise
   ]).catch((err) => ({ success: false, error: err.message }));
 }
