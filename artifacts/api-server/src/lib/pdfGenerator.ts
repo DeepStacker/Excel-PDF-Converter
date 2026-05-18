@@ -296,25 +296,35 @@ function readExcel(excelPath: string, columnMapping: { branchGroupBy: string; br
 let browser: Browser | null = null;
 
 async function getBrowser(): Promise<Browser> {
-  if (!browser || !browser.connected) {
-    const launchOptions: Record<string, any> = {
-      headless: true,
-      args: [
-        "--no-sandbox",
-        "--disable-setuid-sandbox",
-        "--disable-dev-shm-usage",
-        "--disable-gpu",
-        "--no-first-run",
-        "--no-zygote",
-      ],
-    };
-    
-    if (process.env.PUPPETEER_EXECUTABLE_PATH) {
-      launchOptions.executablePath = process.env.PUPPETEER_EXECUTABLE_PATH;
+  if (browser) {
+    try {
+      await browser.version();
+      return browser;
+    } catch {
+      try {
+        await browser.close();
+      } catch { /* ignore close errors */ }
+      browser = null;
     }
-
-    browser = await puppeteer.launch(launchOptions);
   }
+
+  const launchOptions: Record<string, any> = {
+    headless: true,
+    args: [
+      "--no-sandbox",
+      "--disable-setuid-sandbox",
+      "--disable-dev-shm-usage",
+      "--disable-gpu",
+      "--no-first-run",
+      "--no-zygote",
+    ],
+  };
+
+  if (process.env.PUPPETEER_EXECUTABLE_PATH) {
+    launchOptions.executablePath = process.env.PUPPETEER_EXECUTABLE_PATH;
+  }
+
+  browser = await puppeteer.launch(launchOptions);
   return browser;
 }
 
@@ -324,104 +334,114 @@ export async function generatePdf(
   auditType: string,
   config: PdfConfig
 ): Promise<PdfResult> {
-  try {
-    const { columnMapping } = config;
-    const branchGroupBy = columnMapping.branchGroupBy || "Branch Code";
-    const branchNameCol = columnMapping.branchNameCol || "Branch Name";
-    const stateCol = columnMapping.stateCol || "State";
-    const columns = columnMapping.columns || [];
+  const { columnMapping } = config;
+  const branchGroupBy = columnMapping.branchGroupBy || "Branch Code";
+  const branchNameCol = columnMapping.branchNameCol || "Branch Name";
+  const stateCol = columnMapping.stateCol || "State";
+  const columns = columnMapping.columns || [];
 
-    const { rows } = readExcel(excelPath, columnMapping);
+  const { rows } = readExcel(excelPath, columnMapping);
 
-    if (rows.length === 0) {
-      return { success: false, error: "Excel file has no data rows" };
-    }
-
-    const columnNameMap = new Map<string, string>();
-    if (rows.length > 0) {
-      for (const key of Object.keys(rows[0])) {
-        columnNameMap.set(key.toLowerCase(), key);
-      }
-    }
-
-    const groups: Record<string, { rows: Record<string, unknown>[]; branchName: string; state: string }> = {};
-    for (const row of rows) {
-      const branchKey = columnNameMap.get(branchGroupBy.toLowerCase()) || branchGroupBy;
-      const branchCode = String(row[branchKey] || "Unknown").trim();
-      if (!branchCode || branchCode === "None" || branchCode === "") {
-        continue;
-      }
-      
-      const nameKey = columnNameMap.get(branchNameCol.toLowerCase()) || branchNameCol;
-      const stateKey = columnNameMap.get(stateCol.toLowerCase()) || stateCol;
-      
-      if (!groups[branchCode]) {
-        groups[branchCode] = {
-          rows: [],
-          branchName: String(row[nameKey] || branchCode).trim(),
-          state: String(row[stateKey] || "").trim(),
-        };
-      }
-      groups[branchCode].rows.push(row);
-    }
-
-    if (Object.keys(groups).length === 0) {
-      return { success: false, error: `No valid branches found. Check if "${branchGroupBy}" column exists in the Excel file.` };
-    }
-
-    const generatedFiles: GeneratedFile[] = [];
-    const browser = await getBrowser();
-    const page = await browser.newPage();
-
-    const isLandscape = config.pdfStyle.pageOrientation !== "portrait";
-
-    const configColumnMap = new Map<string, ColumnConfig>();
-    for (const col of columns) {
-      if (col.excelColumn) {
-        configColumnMap.set(col.excelColumn.toLowerCase(), col);
-      }
-    }
-
-    for (const [branchCode, group] of Object.entries(groups)) {
-      const safeName = group.branchName.replace(/[^\w\s\-.]/g, "_").replace(/[\s_]+/g, "_").slice(0, 100) || branchCode;
-      const filename = `${safeName}_${auditType}.pdf`;
-      const filepath = path.join(outputDir, filename);
-
-      const html = generateHtml(
-        group.rows,
-        auditType.toUpperCase(),
-        branchCode,
-        group.branchName,
-        group.state,
-        columns,
-        config,
-        columnNameMap
-      );
-
-      await page.setContent(html, { waitUntil: "load" });
-
-      await page.pdf({
-        path: filepath,
-        format: "A4",
-        landscape: isLandscape,
-        printBackground: true,
-        margin: { top: "48px", bottom: "15px", left: "50.2px", right: "50.2px" }
-      });
-
-      const fileSize = fs.statSync(filepath).size;
-      generatedFiles.push({
-        filename,
-        branchCode: String(branchCode),
-        branchName: group.branchName,
-        rowCount: group.rows.length,
-        fileSize,
-      });
-    }
-
-    await page.close();
-
-    return { success: true, files: generatedFiles };
-  } catch (err) {
-    return { success: false, error: err instanceof Error ? err.message : "Unknown error" };
+  if (rows.length === 0) {
+    return { success: false, error: "Excel file has no data rows" };
   }
+
+  const columnNameMap = new Map<string, string>();
+  if (rows.length > 0) {
+    for (const key of Object.keys(rows[0])) {
+      columnNameMap.set(key.toLowerCase(), key);
+    }
+  }
+
+  const groups: Record<string, { rows: Record<string, unknown>[]; branchName: string; state: string }> = {};
+  for (const row of rows) {
+    const branchKey = columnNameMap.get(branchGroupBy.toLowerCase()) || branchGroupBy;
+    const branchCode = String(row[branchKey] || "Unknown").trim();
+    if (!branchCode || branchCode === "None" || branchCode === "") {
+      continue;
+    }
+
+    const nameKey = columnNameMap.get(branchNameCol.toLowerCase()) || branchNameCol;
+    const stateKey = columnNameMap.get(stateCol.toLowerCase()) || stateCol;
+
+    if (!groups[branchCode]) {
+      groups[branchCode] = {
+        rows: [],
+        branchName: String(row[nameKey] || branchCode).trim(),
+        state: String(row[stateKey] || "").trim(),
+      };
+    }
+    groups[branchCode].rows.push(row);
+  }
+
+  if (Object.keys(groups).length === 0) {
+    return { success: false, error: `No valid branches found. Check if "${branchGroupBy}" column exists in the Excel file.` };
+  }
+
+  const generatedFiles: GeneratedFile[] = [];
+  let page: Page | null = null;
+
+  try {
+    const browser = await getBrowser();
+    page = await browser.newPage();
+
+      const isLandscape = config.pdfStyle.pageOrientation !== "portrait";
+
+      const configColumnMap = new Map<string, ColumnConfig>();
+      for (const col of columns) {
+        if (col.excelColumn) {
+          configColumnMap.set(col.excelColumn.toLowerCase(), col);
+        }
+      }
+
+      for (const [branchCode, group] of Object.entries(groups)) {
+        const safeName = group.branchName.replace(/[^\w\s\-.]/g, "_").replace(/[\s_]+/g, "_").slice(0, 100) || branchCode;
+        const filename = `${safeName}_${auditType}.pdf`;
+        const filepath = path.join(outputDir, filename);
+
+        const html = generateHtml(
+          group.rows,
+          auditType.toUpperCase(),
+          branchCode,
+          group.branchName,
+          group.state,
+          columns,
+          config,
+          columnNameMap
+        );
+
+        await page.setContent(html, { waitUntil: "load" });
+
+        await page.pdf({
+          path: filepath,
+          format: "A4",
+          landscape: isLandscape,
+          printBackground: true,
+          margin: { top: "48px", bottom: "15px", left: "50.2px", right: "50.2px" }
+        });
+
+        const fileSize = fs.statSync(filepath).size;
+        generatedFiles.push({
+          filename,
+          branchCode: String(branchCode),
+          branchName: group.branchName,
+          rowCount: group.rows.length,
+          fileSize,
+        });
+      }
+
+      if (page) {
+        await page.close();
+      }
+
+      return { success: true, files: generatedFiles };
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : "Unknown error" };
+    } finally {
+      if (page) {
+        try {
+          await page.close();
+        } catch { /* ignore cleanup errors */ }
+      }
+    }
 }
