@@ -65,7 +65,7 @@ export default function JobDetail() {
       enabled: !!id,
       refetchInterval: (query) => {
         const data = query.state.data;
-        return data?.status === 'pending' || data?.status === 'processing' ? 3000 : false;
+        return data?.status === 'pending' || data?.status === 'processing' ? 500 : false;
       }
     }
   });

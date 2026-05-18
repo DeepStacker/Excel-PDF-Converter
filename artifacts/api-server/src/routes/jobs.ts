@@ -254,9 +254,14 @@ async function processJob(jobId: number, excelBuffer: Buffer, bank: { columnMapp
 
     const updateProgress = async (progress: { processed: number; total: number; currentFile: string }) => {
       totalFiles = progress.total;
-      await db.update(jobsTable)
-        .set({ processedFiles: progress.processed, currentFile: progress.currentFile })
-        .where(eq(jobsTable.id, jobId));
+      logger.info({ jobId, processed: progress.processed, total: progress.total, file: progress.currentFile }, "Updating progress");
+      try {
+        await db.update(jobsTable)
+          .set({ processedFiles: progress.processed, currentFile: progress.currentFile })
+          .where(eq(jobsTable.id, jobId));
+      } catch (err) {
+        logger.error({ jobId, err }, "Failed to update progress");
+      }
     };
 
     logger.debug({ jobId, auditType }, "Launching PDF generation");
@@ -479,6 +484,8 @@ router.get("/:id", async (req, res): Promise<void> => {
         status: jobsTable.status,
         originalFilename: jobsTable.originalFilename,
         fileCount: jobsTable.fileCount,
+        processedFiles: jobsTable.processedFiles,
+        currentFile: jobsTable.currentFile,
         errorMessage: jobsTable.errorMessage,
         createdAt: jobsTable.createdAt,
         updatedAt: jobsTable.updatedAt,
