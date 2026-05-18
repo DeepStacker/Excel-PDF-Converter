@@ -9,7 +9,7 @@ const _require = createRequire(import.meta.url);
 const archiver = _require("archiver") as (format: string, options?: object) => ArchiverInstance;
 import { db } from "@workspace/db";
 import { jobsTable, generatedFilesTable, banksTable } from "@workspace/db";
-import { eq, desc } from "drizzle-orm";
+import { eq, desc, and } from "drizzle-orm";
 import {
   CreateJobBody,
   GetJobParams,
@@ -334,7 +334,8 @@ router.post("/:id/retry", async (req, res): Promise<void> => {
   }
 });
 
-// ── Download single file ──
+// ── Download / view single file ──
+// Use ?download=1 to force attachment (download), default is inline (view in browser)
 router.get("/:id/files/:filename", async (req, res): Promise<void> => {
   const jobId = Number(req.params.id);
   const filename = req.params.filename;
@@ -344,9 +345,12 @@ router.get("/:id/files/:filename", async (req, res): Promise<void> => {
     const [file] = await db
       .select()
       .from(generatedFilesTable)
-      .where(eq(generatedFilesTable.jobId, jobId));
+      .where(and(
+        eq(generatedFilesTable.jobId, jobId),
+        eq(generatedFilesTable.filename, filename),
+      ));
 
-    if (!file || file.filename !== filename) {
+    if (!file) {
       res.status(404).json({ error: "File not found" });
       return;
     }
@@ -356,8 +360,11 @@ router.get("/:id/files/:filename", async (req, res): Promise<void> => {
       return;
     }
 
+    const forceDownload = req.query.download === "1";
+    const disposition = forceDownload ? "attachment" : "inline";
     res.setHeader("Content-Type", "application/pdf");
-    res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+    res.setHeader("Content-Disposition", `${disposition}; filename="${encodeURIComponent(filename)}"`);
+    res.setHeader("Cache-Control", "private, max-age=3600");
     res.send(Buffer.from(file.fileData, "base64"));
   } catch (err) {
     req.log.error({ err }, "Failed to download file");

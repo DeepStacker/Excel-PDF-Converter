@@ -6,7 +6,7 @@ import { JobStatusBadge } from "@/components/status-badge";
 import { formatDate, formatBytes } from "@/lib/format";
 import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Download, RefreshCw, Trash2, FileText, AlertTriangle, Share2, Copy } from "lucide-react";
+import { Download, RefreshCw, Trash2, FileText, AlertTriangle, Share2, Copy, Eye } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { useLocation } from "wouter";
 import { useToast } from "@/hooks/use-toast";
@@ -27,6 +27,37 @@ export default function JobDetail() {
   const [shareUrl, setShareUrl] = useState<string | null>(null);
   const [isShareDialogOpen, setIsShareDialogOpen] = useState(false);
   const [shareExpiry, setShareExpiry] = useState<string>("never");
+  const [downloadingZip, setDownloadingZip] = useState(false);
+
+  const downloadBlob = async (url: string, filename: string) => {
+    try {
+      const res = await fetch(url);
+      if (!res.ok) throw new Error(`Server error: ${res.status}`);
+      const blob = await res.blob();
+      const blobUrl = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = blobUrl;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(blobUrl);
+    } catch (err) {
+      toast({ title: "Download failed", description: (err as Error).message, variant: "destructive" });
+    }
+  };
+
+  const handleDownloadZip = async () => {
+    if (!job?.downloadAllUrl) return;
+    setDownloadingZip(true);
+    const zipName = `${job.bankName}_${job.auditType}_${job.id}.zip`.replace(/[^a-zA-Z0-9_.-]/g, "_");
+    await downloadBlob(job.downloadAllUrl, zipName);
+    setDownloadingZip(false);
+  };
+
+  const handleDownloadPdf = (downloadUrl: string, filename: string) => {
+    downloadBlob(`${downloadUrl}?download=1`, filename);
+  };
 
   const { data: job, isLoading, isError } = useGetJob(id, {
     query: {
@@ -188,11 +219,9 @@ export default function JobDetail() {
             {(job.downloadAllUrl || job.status === 'completed') && (
               <div className="pt-4 border-t mt-4 flex flex-col gap-2">
                 {job.downloadAllUrl && (
-                  <Button className="w-full" asChild>
-                    <a href={job.downloadAllUrl} download>
-                      <Download className="mr-2 h-4 w-4" />
-                      Download All (ZIP)
-                    </a>
+                  <Button className="w-full" onClick={handleDownloadZip} disabled={downloadingZip}>
+                    <Download className="mr-2 h-4 w-4" />
+                    {downloadingZip ? "Preparing ZIP..." : "Download All (ZIP)"}
                   </Button>
                 )}
                 <Button 
@@ -224,7 +253,7 @@ export default function JobDetail() {
                     <TableHead>Branch Name</TableHead>
                     <TableHead>Rows</TableHead>
                     <TableHead>Size</TableHead>
-                    <TableHead className="text-right">Action</TableHead>
+                    <TableHead className="text-right">Actions</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -241,12 +270,23 @@ export default function JobDetail() {
                         {formatBytes(file.fileSize)}
                       </TableCell>
                       <TableCell className="text-right">
-                        <Button variant="ghost" size="sm" asChild>
-                          <a href={file.downloadUrl} target="_blank" rel="noreferrer">
+                        <div className="flex items-center justify-end gap-1">
+                          <Button variant="ghost" size="sm" asChild title="View PDF">
+                            <a href={file.downloadUrl} target="_blank" rel="noreferrer">
+                              <Eye className="h-4 w-4" />
+                              <span className="sr-only">View</span>
+                            </a>
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            title="Download PDF"
+                            onClick={() => handleDownloadPdf(file.downloadUrl, file.filename)}
+                          >
                             <Download className="h-4 w-4" />
                             <span className="sr-only">Download</span>
-                          </a>
-                        </Button>
+                          </Button>
+                        </div>
                       </TableCell>
                     </TableRow>
                   ))}
