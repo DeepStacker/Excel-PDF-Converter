@@ -7,7 +7,10 @@ import { logger } from "./lib/logger";
 
 const app: Express = express();
 
-// ── Security: trust proxy for accurate rate limit IP detection ──
+// ── Suppress fingerprinting ──
+app.disable("x-powered-by");
+
+// ── Trust proxy for accurate rate-limit IP detection ──
 app.set("trust proxy", 1);
 
 // ── Request logging ──
@@ -16,16 +19,10 @@ app.use(
     logger,
     serializers: {
       req(req) {
-        return {
-          id: req.id,
-          method: req.method,
-          url: req.url?.split("?")[0],
-        };
+        return { id: req.id, method: req.method, url: req.url?.split("?")[0] };
       },
       res(res) {
-        return {
-          statusCode: res.statusCode,
-        };
+        return { statusCode: res.statusCode };
       },
     },
   }),
@@ -37,6 +34,7 @@ app.use((_req: Request, res: Response, next: NextFunction) => {
   res.setHeader("X-Frame-Options", "DENY");
   res.setHeader("X-XSS-Protection", "1; mode=block");
   res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
+  res.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
   next();
 });
 
@@ -73,7 +71,7 @@ const jobCreateLimiter = rateLimit({
 
 app.use(globalLimiter);
 app.use("/api/jobs", (req, res, next) => {
-  if (req.method === "POST" && req.path === "/") {
+  if (req.method === "POST" && (req.path === "/" || req.path === "")) {
     jobCreateLimiter(req, res, next);
   } else {
     next();

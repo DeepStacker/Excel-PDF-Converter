@@ -32,7 +32,7 @@ router.post("/", async (req, res): Promise<void> => {
   try {
     const [bank] = await db.insert(banksTable).values({
       name,
-      code,
+      code: code.toUpperCase(),
       description: description ?? null,
       columnMapping,
       pdfStyle: pdfStyle ?? null,
@@ -40,10 +40,10 @@ router.post("/", async (req, res): Promise<void> => {
       isActive: isActive ?? true,
     }).returning();
     res.status(201).json(bank);
-  } catch (err: any) {
+  } catch (err: unknown) {
     req.log.error({ err }, "Failed to create bank");
-    if (err?.code === "23505") {
-      res.status(409).json({ error: "Bank code already exists" });
+    if ((err as NodeJS.ErrnoException & { code?: string })?.code === "23505") {
+      res.status(409).json({ error: "Bank code already exists. Use a different code." });
       return;
     }
     res.status(500).json({ error: "Internal server error" });
@@ -73,10 +73,12 @@ router.put("/:id", async (req, res): Promise<void> => {
   if (!bodyParsed.success) { res.status(400).json({ error: bodyParsed.error.message }); return; }
 
   try {
-    const updates: Record<string, unknown> = {};
+    const updates: Record<string, unknown> = {
+      updatedAt: new Date(), // always set explicitly to guarantee the column refreshes
+    };
     const b = bodyParsed.data;
     if (b.name !== undefined) updates.name = b.name;
-    if (b.code !== undefined) updates.code = b.code;
+    if (b.code !== undefined) updates.code = b.code.toUpperCase();
     if (b.description !== undefined) updates.description = b.description;
     if (b.columnMapping !== undefined) updates.columnMapping = b.columnMapping;
     if (b.pdfStyle !== undefined) updates.pdfStyle = b.pdfStyle;
@@ -90,8 +92,12 @@ router.put("/:id", async (req, res): Promise<void> => {
       .returning();
     if (!bank) { res.status(404).json({ error: "Bank not found" }); return; }
     res.json(bank);
-  } catch (err) {
+  } catch (err: unknown) {
     req.log.error({ err }, "Failed to update bank");
+    if ((err as NodeJS.ErrnoException & { code?: string })?.code === "23505") {
+      res.status(409).json({ error: "Bank code already exists. Use a different code." });
+      return;
+    }
     res.status(500).json({ error: "Internal server error" });
   }
 });

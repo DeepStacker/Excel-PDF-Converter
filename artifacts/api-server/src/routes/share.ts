@@ -1,8 +1,8 @@
-import { Router } from "express";
+import { Router, type Request } from "express";
 import { randomUUID } from "crypto";
 import { db } from "@workspace/db";
 import { shareTokensTable, jobsTable, generatedFilesTable } from "@workspace/db";
-import { eq, and, gt } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import {
   CreateShareLinkParams,
   CreateShareLinkBody,
@@ -11,9 +11,11 @@ import {
 
 const router = Router();
 
-function getShareUrl(req: any, token: string): string {
-  const host = req.headers["x-forwarded-host"] ?? req.headers.host ?? "localhost";
-  const proto = req.headers["x-forwarded-proto"] ?? "https";
+function getShareUrl(req: Request, token: string): string {
+  const host = ((req.headers["x-forwarded-host"] ?? req.headers.host ?? "localhost") as string)
+    .split(",")[0].trim();
+  const proto = ((req.headers["x-forwarded-proto"] ?? "https") as string)
+    .split(",")[0].trim();
   return `${proto}://${host}/share/${token}`;
 }
 
