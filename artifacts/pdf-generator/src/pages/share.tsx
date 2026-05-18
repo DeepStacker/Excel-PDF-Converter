@@ -41,6 +41,18 @@ export default function SharePage() {
     }
   };
 
+  const getExpiryInfo = () => {
+    if (!job.expiresAt) return null;
+    const expiresAt = new Date(job.expiresAt);
+    const now = new Date();
+    const daysLeft = Math.ceil((expiresAt.getTime() - now.getTime()) / (24 * 60 * 60 * 1000));
+    if (daysLeft <= 0) return { type: "expired", message: "This link has expired" };
+    if (daysLeft <= 7) return { type: "warning", message: `Link expires in ${daysLeft} day${daysLeft === 1 ? "" : "s"}` };
+    return { type: "ok", message: `Expires: ${formatDate(job.expiresAt)}` };
+  };
+
+  const expiryInfo = getExpiryInfo();
+
   const handleDownloadZip = async () => {
     if (!job?.downloadAllUrl) return;
     setDownloadingZip(true);
@@ -117,10 +129,23 @@ export default function SharePage() {
                   <div className="hidden sm:block text-muted-foreground">•</div>
                   <div>{job.fileCount} files</div>
                   <div className="hidden sm:block text-muted-foreground">•</div>
-                  <div>Expires: {job.expiresAt ? formatDate(job.expiresAt) : "No expiry"}</div>
+                  <div className={expiryInfo?.type === "warning" ? "text-amber-600 font-medium" : expiryInfo?.type === "expired" ? "text-destructive font-medium" : ""}>
+                    {expiryInfo?.message}
+                  </div>
                 </div>
               </CardDescription>
             </CardHeader>
+            {expiryInfo?.type === "warning" && (
+              <CardContent className="pt-0">
+                <Alert variant="warning" className="border-amber-500 bg-amber-50 dark:bg-amber-900/20">
+                  <AlertTriangle className="h-4 w-4 text-amber-600 dark:text-amber-400" />
+                  <AlertTitle className="text-amber-800 dark:text-amber-300">Link Expiring Soon</AlertTitle>
+                  <AlertDescription className="text-amber-700 dark:text-amber-400">
+                    This shared link will expire in {expiryInfo.message.replace("Link expires in ", "")}. Please download the files before they expire.
+                  </AlertDescription>
+                </Alert>
+              </CardContent>
+            )}
           </Card>
 
           <Card className="shadow-sm border-muted/50">

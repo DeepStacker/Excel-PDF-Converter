@@ -1,4 +1,4 @@
-import { useState, useRef, useMemo } from "react";
+import { useState, useRef, useMemo, useEffect } from "react";
 import { useLocation } from "wouter";
 import { useListBanks } from "@workspace/api-client-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from "@/components/ui/card";
@@ -125,6 +125,12 @@ export default function Generate() {
       validateFile(selectedFile);
     }
   };
+
+  useEffect(() => {
+    if (file && bankId && auditType) {
+      validateFile(file);
+    }
+  }, [bankId, auditType]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
