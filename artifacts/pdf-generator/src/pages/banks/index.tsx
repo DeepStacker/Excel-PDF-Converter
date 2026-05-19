@@ -1,42 +1,63 @@
-import { useListBanks, useDeleteBank, getListBanksQueryKey, getGetStatsQueryKey } from "@workspace/api-client-react";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Card } from "@/components/ui/card";
 import { Link } from "wouter";
 import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Plus, Edit, Trash2, Landmark, Columns } from "lucide-react";
+import { Plus, Edit, Trash2, Landmark, Columns, Loader2 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { Badge } from "@/components/ui/badge";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
 
+async function fetchBanks() {
+  const res = await fetch("/api/banks");
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+}
+
+async function deleteBank(id: number) {
+  const res = await fetch(`/api/banks/${id}`, { method: "DELETE" });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+}
+
 export default function BanksList() {
-  const { data: banks, isLoading, isError } = useListBanks();
   const queryClient = useQueryClient();
   const { toast } = useToast();
 
-  const deleteMutation = useDeleteBank({
-    mutation: {
-      onSuccess: () => {
-        toast({ title: "Bank deleted successfully" });
-        queryClient.invalidateQueries({ queryKey: getListBanksQueryKey() });
-        queryClient.invalidateQueries({ queryKey: getGetStatsQueryKey() });
-      },
-      onError: (err) => {
-        toast({ title: "Failed to delete bank", description: err.message, variant: "destructive" });
-      }
-    }
+  const { data: banks, isLoading, isError } = useQuery({
+    queryKey: ["/api/banks"],
+    queryFn: fetchBanks,
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: deleteBank,
+    onSuccess: () => {
+      toast({ title: "Bank deleted successfully" });
+      queryClient.invalidateQueries({ queryKey: ["/api/banks"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/stats"] });
+    },
+    onError: (err: any) => {
+      toast({ title: "Failed to delete bank", description: err.message, variant: "destructive" });
+    },
   });
 
   if (isLoading) {
-    return <div className="space-y-4">
-      <div className="h-8 w-48 bg-muted rounded"></div>
-      <div className="h-96 bg-muted rounded-xl animate-pulse"></div>
-    </div>;
+    return (
+      <div className="space-y-4">
+        <div className="flex items-center justify-between">
+          <div className="h-8 w-48 bg-muted rounded animate-pulse" />
+          <div className="h-10 w-28 bg-muted rounded animate-pulse" />
+        </div>
+        <div className="h-64 bg-muted rounded-xl animate-pulse" />
+      </div>
+    );
   }
 
-  if (isError || !banks) {
-    return <div className="text-destructive">Failed to load bank configurations.</div>;
+  if (isError) {
+    return <div className="text-destructive p-4 border border-destructive/20 rounded-lg bg-destructive/5">Failed to load bank configurations.</div>;
   }
+
+  const bankList = banks ?? [];
 
   return (
     <div className="space-y-6">
@@ -54,7 +75,7 @@ export default function BanksList() {
       </div>
 
       <Card className="shadow-sm border-muted/50 overflow-hidden">
-        {banks.length === 0 ? (
+        {bankList.length === 0 ? (
           <div className="p-12 text-center">
             <div className="h-12 w-12 rounded-full bg-muted flex items-center justify-center text-muted-foreground mx-auto mb-4">
               <Landmark className="h-6 w-6" />
@@ -62,7 +83,10 @@ export default function BanksList() {
             <h3 className="text-lg font-medium text-foreground">No banks configured</h3>
             <p className="text-muted-foreground mt-1 mb-4">Add your first bank configuration to start generating PDFs.</p>
             <Link href="/banks/new">
-              <Button>Add Bank</Button>
+              <Button>
+                <Plus className="mr-2 h-4 w-4" />
+                Add Bank
+              </Button>
             </Link>
           </div>
         ) : (
@@ -72,24 +96,33 @@ export default function BanksList() {
                 <TableHead>Bank Name</TableHead>
                 <TableHead>Code</TableHead>
                 <TableHead>Status</TableHead>
-                <TableHead>Configuration</TableHead>
+                <TableHead>Table Layout</TableHead>
+                <TableHead>Audit Types</TableHead>
                 <TableHead className="text-right">Actions</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {banks.map((bank) => {
+              {bankList.map((bank: any) => {
                 const cols = bank.columnMapping?.columns || [];
-                const excelCols = cols.filter(c => c.excelColumn !== null).length;
-                const handCols = cols.length - excelCols;
-                
+                const excelCols = cols.filter((c: any) => c.excelColumn !== null && c.excelColumn !== "").length;
+                const blankCols = cols.length - excelCols;
+                const pdfStyle = bank.pdfStyle || {};
+                const orientation = pdfStyle.pageOrientation || "portrait";
+                const headerColor1 = (pdfStyle.headerColors?.[0]) || pdfStyle.headerColor1 || "#FFFF00";
+                const headerColor2 = (pdfStyle.headerColors?.[1]) || pdfStyle.headerColor2 || "#4985E8";
+
                 return (
                   <TableRow key={bank.id}>
                     <TableCell className="font-medium">
                       <div className="flex items-center gap-2">
-                        <Landmark className="h-4 w-4 text-muted-foreground" />
-                        {bank.name}
+                        <Landmark className="h-4 w-4 text-muted-foreground shrink-0" />
+                        <div>
+                          <div>{bank.name}</div>
+                          {bank.description && (
+                            <div className="text-xs text-muted-foreground font-normal mt-0.5 max-w-[200px] truncate">{bank.description}</div>
+                          )}
+                        </div>
                       </div>
-                      {bank.description && <div className="text-xs text-muted-foreground font-normal mt-0.5">{bank.description}</div>}
                     </TableCell>
                     <TableCell>
                       <Badge variant="outline" className="font-mono">{bank.code}</Badge>
@@ -102,16 +135,36 @@ export default function BanksList() {
                       )}
                     </TableCell>
                     <TableCell>
-                      <div className="text-sm font-medium flex items-center gap-1.5">
-                        <Columns className="h-3.5 w-3.5 text-muted-foreground" />
-                        {cols.length} columns <span className="text-xs font-normal text-muted-foreground">({excelCols} Excel, {handCols} Blank)</span>
+                      <div className="flex items-center gap-2">
+                        <div className="flex gap-0.5">
+                          {cols.slice(0, 6).map((_: any, i: number) => {
+                            const colors = pdfStyle.headerColors || [headerColor1, headerColor2];
+                            return (
+                              <div
+                                key={i}
+                                className="w-3 h-5 rounded-sm"
+                                style={{ backgroundColor: colors[i % colors.length] || (i % 2 === 0 ? headerColor1 : headerColor2) }}
+                              />
+                            );
+                          })}
+                          {cols.length > 6 && <div className="w-3 h-5 rounded-sm bg-muted-foreground/20 flex items-center justify-center text-[8px] text-muted-foreground">+{cols.length - 6}</div>}
+                        </div>
+                        <div className="text-sm">
+                          <div className="flex items-center gap-1 text-muted-foreground">
+                            <Columns className="h-3.5 w-3.5" />
+                            <span>{cols.length} cols</span>
+                          </div>
+                          <div className="text-xs text-muted-foreground capitalize">{orientation}</div>
+                        </div>
                       </div>
-                      <div className="flex flex-wrap gap-1 mt-1.5">
-                        {bank.auditTypes.slice(0, 2).map(t => (
-                          <span key={t.code} className="text-xs bg-muted px-1.5 py-0.5 rounded">{t.code}</span>
+                    </TableCell>
+                    <TableCell>
+                      <div className="flex flex-wrap gap-1">
+                        {(bank.auditTypes || []).slice(0, 3).map((t: any) => (
+                          <span key={t.code} className="text-xs bg-muted px-1.5 py-0.5 rounded font-mono">{t.code}</span>
                         ))}
-                        {bank.auditTypes.length > 2 && (
-                          <span className="text-xs bg-muted px-1.5 py-0.5 rounded">+{bank.auditTypes.length - 2}</span>
+                        {(bank.auditTypes || []).length > 3 && (
+                          <span className="text-xs text-muted-foreground">+{bank.auditTypes.length - 3}</span>
                         )}
                       </div>
                     </TableCell>
@@ -123,7 +176,7 @@ export default function BanksList() {
                             <span className="sr-only">Edit</span>
                           </Button>
                         </Link>
-                        
+
                         <AlertDialog>
                           <AlertDialogTrigger asChild>
                             <Button variant="ghost" size="sm" className="h-8 w-8 p-0 text-destructive hover:text-destructive hover:bg-destructive/10">
@@ -135,12 +188,17 @@ export default function BanksList() {
                             <AlertDialogHeader>
                               <AlertDialogTitle>Delete Bank Configuration</AlertDialogTitle>
                               <AlertDialogDescription>
-                                Are you sure you want to delete {bank.name}? This will prevent future PDF generation for this bank. Existing jobs will be preserved.
+                                Are you sure you want to delete <strong>{bank.name}</strong>? This will prevent future PDF generation for this bank. Existing jobs will be preserved.
                               </AlertDialogDescription>
                             </AlertDialogHeader>
                             <AlertDialogFooter>
                               <AlertDialogCancel>Cancel</AlertDialogCancel>
-                              <AlertDialogAction onClick={() => deleteMutation.mutate({ id: bank.id })} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
+                              <AlertDialogAction
+                                onClick={() => deleteMutation.mutate(bank.id)}
+                                className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                                disabled={deleteMutation.isPending}
+                              >
+                                {deleteMutation.isPending ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : null}
                                 Delete
                               </AlertDialogAction>
                             </AlertDialogFooter>
