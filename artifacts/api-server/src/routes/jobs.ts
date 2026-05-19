@@ -233,6 +233,58 @@ function runPdfGenerator(
   ]).catch((err) => ({ success: false, error: err.message }));
 }
 
+interface TemplateSourceColumn { columnName: string; sheetIndex: number; sheetName: string; }
+interface TemplateMappedColumn { header: string; source: TemplateSourceColumn | null; width?: number; dataType?: string; isBlank?: boolean; }
+interface TemplateColumnMapping {
+  branchGroupBy: TemplateSourceColumn | null;
+  branchName: TemplateSourceColumn | null;
+  state: TemplateSourceColumn | null;
+  tableColumns: TemplateMappedColumn[];
+}
+interface FullTemplateConfig {
+  name: string;
+  columnMapping: TemplateColumnMapping;
+  pdfStyle: Record<string, unknown>;
+  rules?: { dataSheetIndex?: number | null };
+}
+
+function templateToPdfConfig(config: FullTemplateConfig): { columnMapping: unknown; pdfStyle: unknown } {
+  const { columnMapping, pdfStyle } = config;
+  return {
+    columnMapping: {
+      branchGroupBy: columnMapping.branchGroupBy?.columnName ?? "",
+      branchNameCol: columnMapping.branchName?.columnName ?? "",
+      stateCol: columnMapping.state?.columnName ?? "",
+      columns: columnMapping.tableColumns.map(col => ({
+        header: col.header,
+        excelColumn: col.isBlank ? null : (col.source?.columnName ?? null),
+        width: col.width ?? 100,
+        dataType: (col.dataType === "currency" || col.dataType === "number") ? "number" : "text",
+      })),
+    },
+    pdfStyle: {
+      pageOrientation: pdfStyle.pageOrientation ?? "landscape",
+      headerColor1: pdfStyle.headerColor1 ?? "#FFCC00",
+      headerColor2: pdfStyle.headerColor2 ?? "#4985E8",
+      alternateRowColor: pdfStyle.alternateRowColor,
+      fontSize: pdfStyle.fontSize ?? 9,
+      headerFontSize: pdfStyle.headerFontSize ?? 9,
+      rowHeight: pdfStyle.rowHeight ?? 30,
+      headerRowHeight: pdfStyle.headerRowHeight ?? 22,
+      fontFamily: pdfStyle.fontFamily ?? "Arial",
+      pageSize: pdfStyle.pageSize ?? "A4",
+      reportTitle: pdfStyle.reportTitle,
+      showDate: pdfStyle.showDate ?? true,
+      showPageNumbers: pdfStyle.showPageNumbers ?? true,
+      footerText: pdfStyle.footerText ?? "",
+      marginTop: pdfStyle.marginTop ?? 15,
+      marginRight: pdfStyle.marginRight ?? 50,
+      marginBottom: pdfStyle.marginBottom ?? 15,
+      marginLeft: pdfStyle.marginLeft ?? 50,
+    },
+  };
+}
+
 async function processJob(jobId: number, excelBuffer: Buffer, bank: { columnMapping: unknown; pdfStyle: unknown }, auditType: string) {
   const tempInput = path.join(TEMP_DIR, `input_${jobId}.xlsx`);
   const outputDir = path.join(TEMP_DIR, `output_${jobId}`);
@@ -452,22 +504,66 @@ router.post(
     return;
   }
 
+  const rawAuditType = String(req.body.auditType ?? "").trim();
+  if (!rawAuditType || !/^[A-Za-z0-9 _-]{1,40}$/.test(rawAuditType)) {
+    res.status(400).json({ error: "auditType is required (alphanumeric, spaces, underscores, hyphens, max 40 chars)" });
+    return;
+  }
+  const auditType = rawAuditType;
+
+  // ── Template-based job (from Visual Designer) ──
+  if (req.body.templateConfig) {
+    let templateConfig: FullTemplateConfig;
+    try {
+      templateConfig = typeof req.body.templateConfig === "string"
+        ? JSON.parse(req.body.templateConfig)
+        : req.body.templateConfig;
+    } catch {
+      res.status(400).json({ error: "Invalid templateConfig JSON" });
+      return;
+    }
+    if (!templateConfig.columnMapping?.branchGroupBy?.columnName) {
+      res.status(400).json({ error: "templateConfig.columnMapping.branchGroupBy is required" });
+      return;
+    }
+    if (!templateConfig.columnMapping.tableColumns?.length) {
+      res.status(400).json({ error: "templateConfig must have at least one table column" });
+      return;
+    }
+    try {
+      const bankConfig = templateToPdfConfig(templateConfig);
+      const [job] = await db.insert(jobsTable).values({
+        bankId: 0,
+        bankName: templateConfig.name || "Visual Template",
+        auditType,
+        status: "pending",
+        originalFilename: req.file.originalname,
+        uploadedFileData: req.file.buffer.toString("base64"),
+        fileCount: 0,
+        processedFiles: 0,
+      }).returning();
+      res.status(201).json(job);
+      processJob(job.id, req.file.buffer, bankConfig, auditType).catch((err) => {
+        logger.error({ err, jobId: job.id }, "Unhandled template job error");
+      });
+    } catch (err) {
+      req.log.error({ err }, "Failed to create template job");
+      res.status(500).json({ error: "Internal server error" });
+    }
+    return;
+  }
+
+  // ── Bank-based job (existing flow) ──
   const parsed = CreateJobBody.safeParse({
     bankId: Number(req.body.bankId),
-    auditType: req.body.auditType,
+    auditType,
   });
   if (!parsed.success) {
     res.status(400).json({ error: "Invalid request: bankId and auditType are required" });
     return;
   }
 
-  const { bankId, auditType } = parsed.data;
-
-  // Sanitize auditType: must be alphanumeric + underscores only (defense in depth)
-  if (!/^[A-Za-z0-9_-]{1,20}$/.test(auditType)) {
-    res.status(400).json({ error: "Invalid audit type format" });
-    return;
-  }
+  const { bankId } = parsed.data;
 
   try {
     const [bank] = await db.select().from(banksTable).where(eq(banksTable.id, bankId));
