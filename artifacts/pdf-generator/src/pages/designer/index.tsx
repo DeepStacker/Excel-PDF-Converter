@@ -319,7 +319,7 @@ export default function DesignerPage() {
             {activeModule === "preview" && "Module 5 — Preview & Generate: Preview branch PDFs and generate all branch PDFs in one click."}
           </span>
           <div className="ml-auto flex items-center gap-1">
-            {MODULE_TABS.map((tab, i) => (
+            {MODULE_TABS.map((tab) => (
               <button key={tab.id} onClick={() => setActiveModule(tab.id)}
                 className={cn("h-1.5 rounded-full transition-all", activeModule === tab.id ? "w-4 bg-primary" : "w-1.5 bg-muted-foreground/30 hover:bg-muted-foreground/50")}
                 title={tab.label} />

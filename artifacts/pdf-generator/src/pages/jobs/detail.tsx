@@ -146,7 +146,7 @@ export default function JobDetail() {
         received += value.length;
         if (onProgress && total > 0) onProgress(Math.round((received / total) * 100));
       }
-      const blob = new Blob(chunks);
+      const blob = new Blob(chunks as BlobPart[]);
       const blobUrl = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = blobUrl; a.download = filename;
