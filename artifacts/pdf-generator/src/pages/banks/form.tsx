@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useRoute, useLocation } from "wouter";
-import { useForm, useFieldArray } from "react-hook-form";
+import { useForm, useFieldArray, useWatch } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import * as z from "zod";
 import { useGetBank, useCreateBank, useUpdateBank, getListBanksQueryKey, getGetBankQueryKey, getGetStatsQueryKey } from "@workspace/api-client-react";
@@ -13,9 +13,11 @@ import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Plus, Trash2, Loader2, ArrowLeft, GripVertical, FileSpreadsheet, FileBox } from "lucide-react";
+import { Plus, Trash2, Loader2, ArrowLeft, GripVertical, FileSpreadsheet, FileBox, ArrowUp, ArrowDown, Eye, EyeOff } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { Separator } from "@/components/ui/separator";
+import { BankConfigPreview } from "@/components/bank-config-preview";
+import { VisualColumnBuilder } from "@/components/visual-column-builder";
 
 const columnConfigSchema = z.object({
   header: z.string().min(1, "Header text is required"),
@@ -43,8 +45,13 @@ const formSchema = z.object({
     headerColor1: z.string().regex(/^#[0-9A-Fa-f]{6}$/, "Must be a valid hex color"),
     headerColor2: z.string().regex(/^#[0-9A-Fa-f]{6}$/, "Must be a valid hex color"),
     fontSize: z.coerce.number().min(6).max(24),
+    fontFamily: z.enum(["Arial", "Helvetica", "Times New Roman", "Courier", "Verdana", "Georgia"]).default("Arial"),
     rowHeight: z.coerce.number().min(10).max(100),
     headerRowHeight: z.coerce.number().min(10).max(100),
+    borderStyle: z.enum(["solid", "dashed", "dotted", "none"]).default("solid"),
+    borderWidth: z.coerce.number().min(0).max(5).default(0.5),
+    alternateRowColor: z.boolean().default(true),
+    alternateRowColor2: z.string().regex(/^#[0-9A-Fa-f]{6}$/, "Must be a valid hex color").default("#F2F2F2"),
   }),
   auditTypes: z.array(z.object({
     code: z.string().min(1, "Required"),
@@ -77,8 +84,13 @@ const defaultValues: FormValues = {
     headerColor1: "#FFFF00",
     headerColor2: "#4985E8",
     fontSize: 10,
+    fontFamily: "Arial",
     rowHeight: 20,
     headerRowHeight: 22.5,
+    borderStyle: "solid",
+    borderWidth: 0.5,
+    alternateRowColor: true,
+    alternateRowColor2: "#F2F2F2",
   },
   auditTypes: [{ code: "POA", label: "Physical Verification" }],
 };
@@ -87,10 +99,14 @@ export default function BankForm() {
   const [matchEdit, paramsEdit] = useRoute("/banks/:id/edit");
   const isEdit = !!matchEdit;
   const id = isEdit && paramsEdit?.id ? parseInt(paramsEdit.id, 10) : 0;
-  
+
   const [_, setLocation] = useLocation();
   const { toast } = useToast();
   const queryClient = useQueryClient();
+  const [dragIndex, setDragIndex] = useState<number | null>(null);
+  const [dropIndex, setDropIndex] = useState<number | null>(null);
+  const [showPreview, setShowPreview] = useState(true);
+  const [showVisualBuilder, setShowVisualBuilder] = useState(false);
 
   const { data: bank, isLoading: isLoadingBank } = useGetBank(id, {
     query: { queryKey: getGetBankQueryKey(id), enabled: isEdit && !!id }
@@ -199,6 +215,10 @@ export default function BankForm() {
 
   const isPending = createMutation.isPending || updateMutation.isPending;
 
+  const columnMapping = useWatch({ control: form.control, name: "columnMapping" });
+  const pdfStyle = useWatch({ control: form.control, name: "pdfStyle" });
+  const previewConfig = { columnMapping, pdfStyle };
+
   const loadTemplatePOA = () => {
     form.setValue("columnMapping.columns", [
       { header: "Prospectno", excelColumn: "Prospectno", width: 101, dataType: "text" },
@@ -227,14 +247,26 @@ export default function BankForm() {
 
   return (
     <div className="max-w-5xl mx-auto space-y-6">
-      <div className="flex items-center gap-4">
-        <Button variant="ghost" size="icon" onClick={() => setLocation("/banks")} className="shrink-0">
-          <ArrowLeft className="h-4 w-4" />
-        </Button>
-        <div>
-          <h1 className="text-3xl font-bold tracking-tight">{isEdit ? "Edit Bank Configuration" : "New Bank Configuration"}</h1>
-          <p className="text-muted-foreground mt-1">Configure Excel column mappings and PDF styling.</p>
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-4">
+          <Button variant="ghost" size="icon" onClick={() => setLocation("/banks")} className="shrink-0">
+            <ArrowLeft className="h-4 w-4" />
+          </Button>
+          <div>
+            <h1 className="text-3xl font-bold tracking-tight">{isEdit ? "Edit Bank Configuration" : "New Bank Configuration"}</h1>
+            <p className="text-muted-foreground mt-1">Configure Excel column mappings and PDF styling.</p>
+          </div>
         </div>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={() => setShowPreview(!showPreview)}
+          className="hidden lg:flex"
+        >
+          {showPreview ? <EyeOff className="h-4 w-4 mr-2" /> : <Eye className="h-4 w-4 mr-2" />}
+          {showPreview ? "Hide Preview" : "Show Preview"}
+        </Button>
       </div>
 
       <Form {...form}>
@@ -336,22 +368,81 @@ export default function BankForm() {
               </div>
 
               <div className="space-y-4">
-                <h3 className="text-sm font-medium text-foreground">PDF Columns</h3>
+                <div className="flex items-center justify-between">
+                  <h3 className="text-sm font-medium text-foreground">PDF Columns</h3>
+                  <div className="flex gap-2">
+                    <Button
+                      type="button"
+                      variant={showVisualBuilder ? "default" : "outline"}
+                      size="sm"
+                      onClick={() => setShowVisualBuilder(!showVisualBuilder)}
+                    >
+                      {showVisualBuilder ? "Hide Visual" : "Visual Builder"}
+                    </Button>
+                  </div>
+                </div>
+
+                {showVisualBuilder && (
+                  <div className="border rounded-lg p-4 bg-card">
+                    <VisualColumnBuilder
+                      columns={form.watch("columnMapping.columns")}
+                      onColumnChange={(index, field, value) => {
+                        if (field === "header" || field === "excelColumn" || field === "dataType") {
+                          form.setValue(`columnMapping.columns.${index}.${field}`, value as any);
+                        }
+                      }}
+                      onWidthChange={(index, width) => {
+                        form.setValue(`columnMapping.columns.${index}.width`, width);
+                      }}
+                      onRemove={(index) => removeColumn(index)}
+                      pdfStyle={form.watch("pdfStyle")}
+                    />
+                  </div>
+                )}
+
                 <div className="space-y-3">
                   {columnFields.map((field, index) => {
                     const isExcelSource = form.watch(`columnMapping.columns.${index}.excelColumn`) !== null;
-                    
+
+                    const handleDragStart = (e: React.DragEvent) => {
+                      e.dataTransfer.effectAllowed = "move";
+                      setDragIndex(index);
+                    };
+
+                    const handleDragOver = (e: React.DragEvent) => {
+                      e.preventDefault();
+                      e.dataTransfer.dropEffect = "move";
+                      if (dragIndex !== null && dragIndex !== index) {
+                        setDropIndex(index);
+                      }
+                    };
+
+                    const handleDragEnd = () => {
+                      if (dragIndex !== null && dropIndex !== null && dragIndex !== dropIndex) {
+                        moveColumn(dragIndex, dropIndex);
+                      }
+                      setDragIndex(null);
+                      setDropIndex(null);
+                    };
+
+                    const isDragging = dragIndex === index;
+                    const isDropTarget = dropIndex === index;
+
                     return (
-                      <div 
-                        key={field.id} 
-                        className={`flex gap-3 items-start p-4 border rounded-xl bg-card transition-colors ${
+                      <div
+                        key={field.id}
+                        draggable
+                        onDragStart={handleDragStart}
+                        onDragOver={handleDragOver}
+                        onDragEnd={handleDragEnd}
+                        className={`flex gap-3 items-start p-4 border rounded-xl bg-card transition-all ${
                           isExcelSource ? "border-l-4 border-l-primary" : "border-l-4 border-l-muted-foreground/30"
-                        }`}
+                        } ${isDragging ? "opacity-50 scale-[0.98]" : ""} ${isDropTarget ? "ring-2 ring-primary ring-offset-2" : ""}`}
                       >
                         <div className="mt-8 text-muted-foreground/50 cursor-grab active:cursor-grabbing">
                           <GripVertical className="h-5 w-5" />
                         </div>
-                        
+
                         <div className="flex-1 grid grid-cols-12 gap-4">
                           <FormField control={form.control} name={`columnMapping.columns.${index}.header`} render={({ field }) => (
                             <FormItem className="col-span-12 md:col-span-3">
@@ -444,12 +535,32 @@ export default function BankForm() {
                           )} />
                         </div>
 
-                        <div className="mt-8">
-                          <Button 
-                            type="button" 
-                            variant="ghost" 
-                            size="icon" 
-                            className="text-destructive shrink-0 hover:bg-destructive/10" 
+                        <div className="mt-8 flex flex-col gap-1">
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8 shrink-0 hover:bg-muted"
+                            onClick={() => moveColumn(index, index - 1)}
+                            disabled={index === 0}
+                          >
+                            <ArrowUp className="h-4 w-4" />
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8 shrink-0 hover:bg-muted"
+                            onClick={() => moveColumn(index, index + 1)}
+                            disabled={index === columnFields.length - 1}
+                          >
+                            <ArrowDown className="h-4 w-4" />
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8 shrink-0 text-destructive hover:bg-destructive/10"
                             onClick={() => removeColumn(index)}
                             disabled={columnFields.length === 1}
                           >
@@ -473,121 +584,193 @@ export default function BankForm() {
             </CardContent>
           </Card>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-            <Card className="shadow-sm border-muted/50">
-              <CardHeader>
-                <CardTitle>PDF Styling</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <FormField control={form.control} name="pdfStyle.pageOrientation" render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Orientation</FormLabel>
-                    <Select onValueChange={field.onChange} defaultValue={field.value}>
-                      <FormControl><SelectTrigger><SelectValue /></SelectTrigger></FormControl>
-                      <SelectContent>
-                        <SelectItem value="portrait">Portrait</SelectItem>
-                        <SelectItem value="landscape">Landscape</SelectItem>
-                      </SelectContent>
-                    </Select>
-                    <FormMessage />
-                  </FormItem>
-                )} />
-                <div className="grid grid-cols-2 gap-4">
-                  <FormField control={form.control} name="pdfStyle.headerColor1" render={({ field }) => (
+          <div className="grid grid-cols-1 lg:grid-cols-[1fr_420px] gap-8">
+            <div className="space-y-6">
+              <Card className="shadow-sm border-muted/50">
+                <CardHeader>
+                  <CardTitle>PDF Styling</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <FormField control={form.control} name="pdfStyle.pageOrientation" render={({ field }) => (
                     <FormItem>
-                      <FormLabel>Header Color 1</FormLabel>
-                      <div className="flex gap-2">
-                        <div className="w-10 h-10 rounded border shrink-0" style={{ backgroundColor: field.value }}></div>
-                        <FormControl><Input {...field} /></FormControl>
+                      <FormLabel>Orientation</FormLabel>
+                      <Select onValueChange={field.onChange} defaultValue={field.value}>
+                        <FormControl><SelectTrigger><SelectValue /></SelectTrigger></FormControl>
+                        <SelectContent>
+                          <SelectItem value="portrait">Portrait</SelectItem>
+                          <SelectItem value="landscape">Landscape</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <FormMessage />
+                    </FormItem>
+                  )} />
+                  <div className="grid grid-cols-2 gap-4">
+                    <FormField control={form.control} name="pdfStyle.headerColor1" render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Header Color 1</FormLabel>
+                        <div className="flex gap-2">
+                          <div className="w-10 h-10 rounded border shrink-0" style={{ backgroundColor: field.value }}></div>
+                          <FormControl><Input {...field} /></FormControl>
+                        </div>
+                        <FormMessage />
+                      </FormItem>
+                    )} />
+                    <FormField control={form.control} name="pdfStyle.headerColor2" render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Header Color 2</FormLabel>
+                        <div className="flex gap-2">
+                          <div className="w-10 h-10 rounded border shrink-0" style={{ backgroundColor: field.value }}></div>
+                          <FormControl><Input {...field} /></FormControl>
+                        </div>
+                        <FormMessage />
+                      </FormItem>
+                    )} />
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <FormField control={form.control} name="pdfStyle.fontSize" render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Font Size (pt)</FormLabel>
+                        <FormControl><Input type="number" {...field} /></FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )} />
+                    <FormField control={form.control} name="pdfStyle.fontFamily" render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Font Family</FormLabel>
+                        <Select onValueChange={field.onChange} defaultValue={field.value}>
+                          <FormControl><SelectTrigger><SelectValue /></SelectTrigger></FormControl>
+                          <SelectContent>
+                            <SelectItem value="Arial">Arial</SelectItem>
+                            <SelectItem value="Helvetica">Helvetica</SelectItem>
+                            <SelectItem value="Times New Roman">Times New Roman</SelectItem>
+                            <SelectItem value="Courier">Courier</SelectItem>
+                            <SelectItem value="Verdana">Verdana</SelectItem>
+                            <SelectItem value="Georgia">Georgia</SelectItem>
+                          </SelectContent>
+                        </Select>
+                        <FormMessage />
+                      </FormItem>
+                    )} />
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <FormField control={form.control} name="pdfStyle.rowHeight" render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Row Height (pt)</FormLabel>
+                        <FormControl><Input type="number" {...field} /></FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )} />
+                    <FormField control={form.control} name="pdfStyle.headerRowHeight" render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Header Row Height (pt)</FormLabel>
+                        <FormControl><Input type="number" {...field} /></FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )} />
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <FormField control={form.control} name="pdfStyle.borderStyle" render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Border Style</FormLabel>
+                        <Select onValueChange={field.onChange} defaultValue={field.value}>
+                          <FormControl><SelectTrigger><SelectValue /></SelectTrigger></FormControl>
+                          <SelectContent>
+                            <SelectItem value="solid">Solid</SelectItem>
+                            <SelectItem value="dashed">Dashed</SelectItem>
+                            <SelectItem value="dotted">Dotted</SelectItem>
+                            <SelectItem value="none">None</SelectItem>
+                          </SelectContent>
+                        </Select>
+                        <FormMessage />
+                      </FormItem>
+                    )} />
+                    <FormField control={form.control} name="pdfStyle.borderWidth" render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Border Width (pt)</FormLabel>
+                        <FormControl><Input type="number" step="0.1" {...field} /></FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )} />
+                  </div>
+                  <FormField control={form.control} name="pdfStyle.alternateRowColor" render={({ field }) => (
+                    <FormItem className="flex flex-row items-center justify-between rounded-lg border p-4">
+                      <div className="space-y-0.5">
+                        <FormLabel className="text-base">Alternate Row Colors</FormLabel>
+                        <FormDescription>Use alternating background colors for data rows.</FormDescription>
                       </div>
-                      <FormMessage />
+                      <FormControl>
+                        <Switch checked={field.value} onCheckedChange={field.onChange} />
+                      </FormControl>
                     </FormItem>
                   )} />
-                  <FormField control={form.control} name="pdfStyle.headerColor2" render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Header Color 2</FormLabel>
-                      <div className="flex gap-2">
-                        <div className="w-10 h-10 rounded border shrink-0" style={{ backgroundColor: field.value }}></div>
-                        <FormControl><Input {...field} /></FormControl>
-                      </div>
-                      <FormMessage />
-                    </FormItem>
-                  )} />
-                </div>
-                <div className="grid grid-cols-2 gap-4">
-                  <FormField control={form.control} name="pdfStyle.fontSize" render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Font Size (pt)</FormLabel>
-                      <FormControl><Input type="number" {...field} /></FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )} />
-                  <FormField control={form.control} name="pdfStyle.rowHeight" render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Row Height (pt)</FormLabel>
-                      <FormControl><Input type="number" {...field} /></FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )} />
-                  <FormField control={form.control} name="pdfStyle.headerRowHeight" render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Header Row Height (pt)</FormLabel>
-                      <FormControl><Input type="number" {...field} /></FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )} />
-                </div>
-              </CardContent>
-            </Card>
-
-            <Card className="shadow-sm border-muted/50 flex flex-col">
-              <CardHeader className="flex flex-row items-center justify-between pb-2">
-                <div>
-                  <CardTitle>Audit Types</CardTitle>
-                  <CardDescription>Available audit categories for this bank.</CardDescription>
-                </div>
-                <Button type="button" variant="outline" size="sm" onClick={() => appendAudit({ code: "", label: "" })}>
-                  <Plus className="h-4 w-4 mr-1" /> Add
-                </Button>
-              </CardHeader>
-              <CardContent className="flex-1 overflow-auto">
-                <div className="space-y-4">
-                  {auditFields.map((field, index) => (
-                    <div key={field.id} className="flex gap-3 items-start">
-                      <FormField control={form.control} name={`auditTypes.${index}.code`} render={({ field }) => (
-                        <FormItem className="flex-1">
-                          {index === 0 && <FormLabel className="text-xs">Code</FormLabel>}
-                          <FormControl><Input placeholder="Code" {...field} /></FormControl>
-                          <FormMessage />
-                        </FormItem>
-                      )} />
-                      <FormField control={form.control} name={`auditTypes.${index}.label`} render={({ field }) => (
-                        <FormItem className="flex-[2]">
-                          {index === 0 && <FormLabel className="text-xs">Label</FormLabel>}
-                          <FormControl><Input placeholder="Label" {...field} /></FormControl>
-                          <FormMessage />
-                        </FormItem>
-                      )} />
-                      <div className={index === 0 ? "mt-6" : ""}>
-                        <Button 
-                          type="button" 
-                          variant="ghost" 
-                          size="icon" 
-                          className="text-destructive shrink-0 hover:bg-destructive/10" 
-                          onClick={() => removeAudit(index)}
-                          disabled={auditFields.length === 1}
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
-                      </div>
-                    </div>
-                  ))}
-                  {form.formState.errors.auditTypes && !Array.isArray(form.formState.errors.auditTypes) && (
-                    <p className="text-sm font-medium text-destructive mt-2">{form.formState.errors.auditTypes.message as string}</p>
+                  {form.watch("pdfStyle.alternateRowColor") && (
+                    <FormField control={form.control} name="pdfStyle.alternateRowColor2" render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Alternate Row Color</FormLabel>
+                        <div className="flex gap-2">
+                          <div className="w-10 h-10 rounded border shrink-0" style={{ backgroundColor: field.value }}></div>
+                          <FormControl><Input {...field} /></FormControl>
+                        </div>
+                        <FormMessage />
+                      </FormItem>
+                    )} />
                   )}
-                </div>
-              </CardContent>
-            </Card>
+                </CardContent>
+              </Card>
+
+              <Card className="shadow-sm border-muted/50 flex flex-col">
+                <CardHeader className="flex flex-row items-center justify-between pb-2">
+                  <div>
+                    <CardTitle>Audit Types</CardTitle>
+                    <CardDescription>Available audit categories for this bank.</CardDescription>
+                  </div>
+                  <Button type="button" variant="outline" size="sm" onClick={() => appendAudit({ code: "", label: "" })}>
+                    <Plus className="h-4 w-4 mr-1" /> Add
+                  </Button>
+                </CardHeader>
+                <CardContent className="flex-1 overflow-auto">
+                  <div className="space-y-4">
+                    {auditFields.map((field, index) => (
+                      <div key={field.id} className="flex gap-3 items-start">
+                        <FormField control={form.control} name={`auditTypes.${index}.code`} render={({ field }) => (
+                          <FormItem className="flex-1">
+                            {index === 0 && <FormLabel className="text-xs">Code</FormLabel>}
+                            <FormControl><Input placeholder="Code" {...field} /></FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )} />
+                        <FormField control={form.control} name={`auditTypes.${index}.label`} render={({ field }) => (
+                          <FormItem className="flex-[2]">
+                            {index === 0 && <FormLabel className="text-xs">Label</FormLabel>}
+                            <FormControl><Input placeholder="Label" {...field} /></FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )} />
+                        <div className={index === 0 ? "mt-6" : ""}>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            className="text-destructive shrink-0 hover:bg-destructive/10"
+                            onClick={() => removeAudit(index)}
+                            disabled={auditFields.length === 1}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      </div>
+                    ))}
+                    {form.formState.errors.auditTypes && !Array.isArray(form.formState.errors.auditTypes) && (
+                      <p className="text-sm font-medium text-destructive mt-2">{form.formState.errors.auditTypes.message as string}</p>
+                    )}
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
+
+            <div className="lg:sticky lg:top-4 lg:self-start">
+              {showPreview && <BankConfigPreview config={previewConfig} />}
+            </div>
           </div>
 
           <div className="flex justify-end gap-4 sticky bottom-4 bg-background/80 backdrop-blur p-4 rounded-xl border shadow-sm">

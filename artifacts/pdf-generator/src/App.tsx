@@ -11,6 +11,8 @@ import JobsList  from "@/pages/jobs/index";
 import JobDetail from "@/pages/jobs/detail";
 import BanksList from "@/pages/banks/index";
 import BankForm  from "@/pages/banks/form";
+import NewBankPage from "@/pages/banks/new";
+import EditBankPage from "@/pages/banks/edit";
 import SharePage from "@/pages/share";
 import NotFound  from "@/pages/not-found";
 
@@ -31,8 +33,8 @@ function Router() {
               <Route path="/jobs" component={JobsList} />
               <Route path="/jobs/:id" component={JobDetail} />
               <Route path="/banks" component={BanksList} />
-              <Route path="/banks/new" component={BankForm} />
-              <Route path="/banks/:id/edit" component={BankForm} />
+              <Route path="/banks/new" component={NewBankPage} />
+              <Route path="/banks/:id/edit" component={EditBankPage} />
               <Route component={NotFound} />
             </Switch>
           </ErrorBoundary>

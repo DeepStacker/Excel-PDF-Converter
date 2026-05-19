@@ -42,7 +42,7 @@ export default function SharePage() {
   };
 
   const getExpiryInfo = () => {
-    if (!job.expiresAt) return null;
+    if (!job?.expiresAt) return null;
     const expiresAt = new Date(job.expiresAt);
     const now = new Date();
     const daysLeft = Math.ceil((expiresAt.getTime() - now.getTime()) / (24 * 60 * 60 * 1000));

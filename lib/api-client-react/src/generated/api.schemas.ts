@@ -152,6 +152,12 @@ export interface Job {
   errorMessage?: string | null;
   createdAt: string;
   updatedAt: string;
+  /** @nullable */
+  processedCount?: number | null;
+  /** @nullable */
+  currentFile?: string | null;
+  /** @nullable */
+  daysUntilExpiry?: number | null;
 }
 
 export type JobDetail = Job & ({

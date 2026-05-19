@@ -3,6 +3,7 @@ import { Card } from "@/components/ui/card";
 import { JobStatusBadge } from "@/components/status-badge";
 import { formatDate } from "@/lib/format";
 import { Link } from "wouter";
+import { JobStatus } from "@workspace/api-client-react";
 import { FileText, ChevronRight, ChevronLeft, ChevronsLeft, ChevronsRight } from "lucide-react";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
@@ -117,7 +118,7 @@ export default function JobsList() {
                 {jobs.map((job) => (
                   <TableRow key={job.id}>
                     <TableCell>
-                      <JobStatusBadge status={job.status} />
+                      <JobStatusBadge status={job.status as JobStatus} />
                     </TableCell>
                     <TableCell className="font-medium">
                       {job.bankName}
