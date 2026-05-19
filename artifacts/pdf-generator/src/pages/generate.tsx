@@ -1,6 +1,6 @@
 import { useState, useRef, useMemo, useEffect } from "react";
 import { useLocation } from "wouter";
-import { useListBanks } from "@workspace/api-client-react";
+import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -14,7 +14,14 @@ import { Separator } from "@/components/ui/separator";
 export default function Generate() {
   const [_, setLocation] = useLocation();
   const { toast } = useToast();
-  const { data: banks, isLoading: loadingBanks } = useListBanks();
+  const { data: banks, isLoading: loadingBanks } = useQuery({
+    queryKey: ["/api/banks"],
+    queryFn: async () => {
+      const res = await fetch("/api/banks");
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return res.json();
+    },
+  });
 
   const [bankId, setBankId] = useState<string>("");
   const [auditType, setAuditType] = useState<string>("");

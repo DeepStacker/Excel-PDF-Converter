@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useRoute } from "wouter";
-import { useGetSharedJob, getGetSharedJobQueryKey } from "@workspace/api-client-react";
+import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { formatBytes, formatDate } from "@/lib/format";
 import { Button } from "@/components/ui/button";
@@ -15,12 +15,15 @@ export default function SharePage() {
   const { toast } = useToast();
   const [downloadingZip, setDownloadingZip] = useState(false);
 
-  const { data: job, isLoading, isError } = useGetSharedJob(token, {
-    query: {
-      queryKey: getGetSharedJobQueryKey(token),
-      enabled: !!token,
-      retry: false
-    }
+  const { data: job, isLoading, isError } = useQuery({
+    queryKey: ["/api/share", token],
+    queryFn: async ({ signal }) => {
+      const res = await fetch(`/api/share/${token}`, { signal });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return res.json();
+    },
+    enabled: !!token,
+    retry: false,
   });
 
   const downloadBlob = async (url: string, filename: string) => {

@@ -1,7 +1,8 @@
 import { Badge } from "@/components/ui/badge";
-import { JobStatus } from "@workspace/api-client-react";
 
-export function JobStatusBadge({ status }: { status: JobStatus }) {
+export type JobStatus = "pending" | "processing" | "completed" | "failed";
+
+export function JobStatusBadge({ status }: { status: JobStatus | string }) {
   switch (status) {
     case 'pending': 
       return <Badge variant="secondary" className="bg-muted text-muted-foreground">Pending</Badge>;

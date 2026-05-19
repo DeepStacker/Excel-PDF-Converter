@@ -10,7 +10,6 @@ import Generate  from "@/pages/generate";
 import JobsList  from "@/pages/jobs/index";
 import JobDetail from "@/pages/jobs/detail";
 import BanksList from "@/pages/banks/index";
-import BankForm  from "@/pages/banks/form";
 import NewBankPage from "@/pages/banks/new";
 import EditBankPage from "@/pages/banks/edit";
 import SharePage from "@/pages/share";

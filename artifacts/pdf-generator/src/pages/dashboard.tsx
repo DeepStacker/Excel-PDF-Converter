@@ -5,7 +5,22 @@ import { JobStatusBadge } from "@/components/status-badge";
 import { formatDate } from "@/lib/format";
 import { Link } from "wouter";
 import { Button } from "@/components/ui/button";
-import type { Stats } from "@workspace/api-client-react";
+interface Stats {
+  totalJobs: number;
+  completedJobs: number;
+  failedJobs: number;
+  totalPdfsGenerated: number;
+  totalBanks: number;
+  recentJobs: Array<{
+    id: number;
+    bankName: string;
+    auditType: string;
+    status: string;
+    originalFilename: string;
+    fileCount: number;
+    createdAt: string;
+  }>;
+}
 
 async function fetchStats(signal?: AbortSignal): Promise<Stats> {
   const res = await fetch("/api/stats", { signal });
