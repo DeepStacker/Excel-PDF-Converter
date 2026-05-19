@@ -13,6 +13,7 @@ import BanksList from "@/pages/banks/index";
 import NewBankPage from "@/pages/banks/new";
 import EditBankPage from "@/pages/banks/edit";
 import SharePage from "@/pages/share";
+import DesignerPage from "@/pages/designer/index";
 import NotFound  from "@/pages/not-found";
 
 function Router() {
@@ -21,6 +22,11 @@ function Router() {
       <Route path="/share/:token">
         <ErrorBoundary>
           <SharePage />
+        </ErrorBoundary>
+      </Route>
+      <Route path="/designer">
+        <ErrorBoundary>
+          <DesignerPage />
         </ErrorBoundary>
       </Route>
       <Route>

@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Link, useLocation } from "wouter";
-import { LayoutDashboard, FileUp, List, Landmark, Menu, X } from "lucide-react";
+import { LayoutDashboard, FileUp, List, Landmark, Menu, X, FlaskConical } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import {
@@ -16,6 +16,7 @@ const navigation = [
   { name: "Generate PDFs", href: "/generate", icon: FileUp },
   { name: "Jobs History", href: "/jobs", icon: List },
   { name: "Banks Configurations", href: "/banks", icon: Landmark },
+  { name: "Template Designer", href: "/designer", icon: FlaskConical },
 ];
 
 function NavItem({ item, onClick }: { item: typeof navigation[0]; onClick?: () => void }) {
