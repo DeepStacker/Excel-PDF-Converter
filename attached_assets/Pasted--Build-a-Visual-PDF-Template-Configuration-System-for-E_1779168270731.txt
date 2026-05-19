@@ -1,0 +1,568 @@
+# Build a Visual PDF Template Configuration System for Excel-to-PDF Banking Reports
+
+## Context
+
+We already have a working application that:
+
+* uploads Excel files
+* processes multiple sheets
+* generates PDFs
+
+However, the current system is heavily hardcoded.
+
+Problems in current system:
+
+* PDF layout is coded manually
+* adding/removing columns requires code changes
+* changing row/column sizes requires code changes
+* grouping logic is hardcoded
+* summary sections are hardcoded
+* bank-specific layouts require engineering effort
+* mappings between Excel sheets and PDF are static
+* many business rules are embedded directly in backend code
+
+We now want to build a fully dynamic, visual, configuration-driven system.
+
+The goal is:
+
+> Non-technical users should be able to visually configure PDF layouts, mappings, grouping logic, table structure, summary sections, and rendering rules without modifying code.
+
+This is NOT a generic spreadsheet app.
+
+This is a:
+
+# Visual Banking PDF Template Designer
+
+---
+
+# Core System Requirements
+
+The system should allow users to:
+
+* upload Excel files containing multiple sheets
+* preview all sheets visually
+* select columns from different sheets
+* bind selected columns into PDF sections
+* visually design PDF layouts
+* resize rows/columns visually
+* configure table structure visually
+* define grouping logic
+* define summary headers
+* generate PDFs dynamically
+* save reusable templates
+* support manual blank columns in PDF
+* support repeated/grouped sections
+* support branch-wise PDF generation
+* support complex business rules
+
+---
+
+# High-Level Architecture
+
+The system should have 5 major modules:
+
+1. Excel Data Engine
+2. Data Mapping Layer
+3. Visual Template Designer
+4. Rule & Grouping Engine
+5. Dynamic PDF Rendering Engine
+
+---
+
+# 1. Excel Data Engine
+
+## Requirements
+
+The system must:
+
+* upload `.xlsx` and `.csv`
+* support multiple sheets
+* preserve original sheet names
+* preview sheet data
+* normalize rows internally
+* track source metadata
+
+Each cell should internally contain:
+
+```ts
+{
+  sheetName,
+  rowIndex,
+  columnIndex,
+  columnName,
+  value
+}
+```
+
+## UI Requirements
+
+### Left Sidebar
+
+Show:
+
+* uploaded file
+* all sheets
+* all columns
+
+Example:
+
+Workbook
+├── Sheet1
+│    ├── Name
+│    ├── Amount
+│    ├── Branch
+│
+├── Sheet2
+│    ├── GoldType
+│    ├── Weight
+
+---
+
+# 2. Data Mapping Layer
+
+This is the most important layer.
+
+We should NOT directly render Excel rows into PDF.
+
+Instead:
+
+Excel → Internal Data Model → PDF Renderer
+
+Example normalized model:
+
+```ts
+{
+  branch,
+  customerName,
+  accountNo,
+  ornaments[],
+  totalAmount
+}
+```
+
+The UI must allow users to visually bind data.
+
+Example:
+
+* drag column from sheet
+* drop into PDF field
+
+OR
+
+click field → select Excel column
+
+Example:
+
+"Customer Name" → Sheet1.Name
+"Branch" → Sheet1.Branch
+"Gold Type" → Sheet2.GoldType
+
+---
+
+# 3. Visual PDF Template Designer
+
+This is the core feature.
+
+The designer should feel like:
+
+* Canva
+* Figma
+* Excel Layout Designer
+
+But simplified for banking reports.
+
+---
+
+# Layout Structure
+
+Support:
+
+* Header
+* Summary Section
+* Dynamic Tables
+* Footer
+
+---
+
+# Canvas Requirements
+
+The center area should be a PDF canvas.
+
+Users should be able to:
+
+* drag/drop fields
+* resize fields
+* move sections
+* create tables visually
+* merge cells
+* split cells
+* add borders
+* set colors
+* set fonts
+* set alignment
+* set row height
+* set column width
+* add static labels
+* add empty manual columns
+
+---
+
+# Table Builder Requirements
+
+The system should support dynamic tables.
+
+Users should be able to:
+
+* create columns visually
+* resize columns by dragging
+* reorder columns
+* hide/show columns
+* define table headers
+* define row styles
+* configure repeating rows
+* configure page header repetition
+
+---
+
+# Manual Blank Columns
+
+Important feature:
+
+Users sometimes intentionally leave columns blank in generated PDF for handwritten entries.
+
+Example:
+
+| Customer | Amount | Signature | Remarks |
+
+Where:
+
+* Signature
+* Remarks
+
+are blank intentionally.
+
+The designer must support static/manual columns.
+
+---
+
+# Dynamic Data Fields
+
+Support placeholders like:
+
+```txt
+{{branch_name}}
+{{customer_name}}
+{{total_amount}}
+```
+
+These should bind dynamically.
+
+---
+
+# Summary Section Requirements
+
+Support configurable summary headers.
+
+Example:
+
+Branch: {{branch}}
+Total Accounts: {{count}}
+Total Amount: {{sum}}
+
+These should support:
+
+* fixed positioning
+* page repetition
+* conditional rendering
+
+---
+
+# 4. Rule & Grouping Engine
+
+The system must support visual business rules.
+
+Do NOT hardcode rules.
+
+Rules should be configurable.
+
+---
+
+# Required Rule Types
+
+## A. Grouping Rules
+
+Examples:
+
+Group by Branch
+Generate separate PDF per branch
+
+OR
+
+Group by Account Number
+
+---
+
+## B. Merge/Duplicate Rules
+
+Example:
+
+Same customer appears multiple times due to:
+
+* multiple ornaments
+* multiple entries
+
+Assign same serial number.
+
+---
+
+## C. Filtering Rules
+
+Examples:
+
+Ignore rows where:
+
+* amount = 0
+* branch is empty
+* customer name missing
+
+---
+
+## D. Aggregation Rules
+
+Examples:
+
+* total amount
+* count customers
+* total ornaments
+
+---
+
+## E. Conditional Rendering
+
+Examples:
+
+If ornaments exist → show section
+Else hide section
+
+---
+
+# Rule Builder UI
+
+The UI should be visual.
+
+Example:
+
+IF
+[Amount]
+[ > ]
+[1000]
+
+THEN
+[Highlight Row]
+
+---
+
+# 5. Dynamic PDF Rendering Engine
+
+This engine should:
+
+* generate PDFs dynamically
+* support pagination
+* support repeated headers
+* support grouped rendering
+* support dynamic row heights
+* support overflow handling
+* support multi-page rendering
+
+---
+
+# Important Rendering Requirements
+
+Support:
+
+* automatic page breaks
+* repeating table headers
+* grouped sections
+* branch-wise rendering
+* conditional sections
+* dynamic row expansion
+
+---
+
+# Template System
+
+Users must be able to:
+
+* save template
+* edit template
+* duplicate template
+* preview template
+* export template
+
+Templates should store:
+
+* layout
+* mappings
+* rules
+* styles
+* grouping logic
+
+Everything should be JSON-driven.
+
+Example:
+
+```json
+{
+  "layout": {},
+  "mappings": {},
+  "rules": [],
+  "grouping": {},
+  "styles": {}
+}
+```
+
+---
+
+# Recommended Tech Stack
+
+## Frontend
+
+Use:
+
+* React
+* TypeScript
+
+### For visual editor:
+
+* Konva.js
+  OR
+* Fabric.js
+
+### For data table preview:
+
+* AG Grid
+  OR
+* Handsontable
+
+---
+
+# Backend
+
+Node.js
+
+Use:
+
+* SheetJS / ExcelJS for Excel parsing
+* Puppeteer for HTML-to-PDF rendering
+
+---
+
+# UI Layout
+
+## LEFT SIDEBAR
+
+* files
+* sheets
+* columns
+* templates
+
+## CENTER
+
+PDF visual designer canvas
+
+## RIGHT SIDEBAR
+
+properties panel
+
+Properties:
+
+* font
+* colors
+* width
+* height
+* borders
+* alignment
+* mappings
+* rules
+
+## TOP TOOLBAR
+
+* save
+* preview PDF
+* undo
+* export
+* zoom
+* grouping
+
+---
+
+# Important Engineering Principles
+
+## DO NOT hardcode bank logic.
+
+Everything must be:
+
+* configuration-driven
+* JSON-driven
+* reusable
+* template-based
+
+---
+
+# Important Constraint
+
+DO NOT build a full Excel clone.
+
+Only implement:
+
+* visual layout designing
+* table configuration
+* mapping
+* grouping
+* resizing
+* styling
+* rule configuration
+
+---
+
+# MVP Scope (Build First)
+
+Phase 1:
+
+* upload excel
+* preview sheets
+* drag/drop PDF designer
+* bind data fields
+* dynamic tables
+* resize rows/columns
+* save template
+* generate PDF
+
+Phase 2:
+
+* grouping
+* repeated sections
+* branch-wise PDFs
+* conditional rendering
+* summary sections
+
+Phase 3:
+
+* advanced rule engine
+* AI auto-mapping
+* OCR support
+* collaborative editing
+
+---
+
+# Final Goal
+
+The final system should allow operations users to:
+
+* configure any bank format
+* design PDF layouts visually
+* modify columns without code
+* create reusable templates
+* generate PDFs dynamically
+
+without developer intervention.
